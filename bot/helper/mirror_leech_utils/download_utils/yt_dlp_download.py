@@ -81,7 +81,7 @@ class YoutubeDLHelper:
             },
             "downloader_args": {
                 BinConfig.ARIA2_NAME: [
-                    "-x32",
+                    "-x16",
                     "-k1M",
                     "-s32",
                     "--max-tries=5",

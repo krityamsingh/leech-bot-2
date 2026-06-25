@@ -127,6 +127,10 @@ class HypertgDownload(HypertgTransfer):
             self._ref_cache.pop(next(iter(self._ref_cache)))
         self._ref_cache[idx] = data
 
+    @staticmethod
+    def _lane_key(idx, lane=None):
+        return (idx, lane) if lane is not None else idx
+
     def _message_fid(self):
         try:
             media = self._media_of(self.message)
@@ -224,8 +228,8 @@ class HypertgDownload(HypertgTransfer):
                 return None, -2
             raise
 
-    async def _get_cdn_session(self, idx, cdn_dc, client):
-        key = (idx, cdn_dc)
+    async def _get_cdn_session(self, idx, cdn_dc, client, lane=None):
+        key = (idx, lane, cdn_dc)
         s = self._cdn_sessions.get(key)
         if s and s.is_connected:
             return s
@@ -236,13 +240,14 @@ class HypertgDownload(HypertgTransfer):
         self._cdn_sessions[key] = s
         return s
 
-    async def _cdnpull(self, idx, cdn_info, off, csz):
+    async def _cdnpull(self, idx, cdn_info, off, csz, lane=None):
         client = self.clients[idx]
         cdn_dc = cdn_info["cdn_dc"]
         file_token = cdn_info["file_token"]
         enc_key = cdn_info["key"]
         enc_iv = cdn_info["iv"]
-        sess = await self._get_cdn_session(idx, cdn_dc, client)
+        state_key = self._lane_key(idx, lane)
+        sess = await self._get_cdn_session(idx, cdn_dc, client, lane)
 
         for attempt in range(3):
             try:
@@ -279,13 +284,13 @@ class HypertgDownload(HypertgTransfer):
                 LOGGER.warning(
                     f"HypertgDL CDN FileTokenInvalid dc={cdn_dc} — fallback to non-CDN"
                 )
-                self._cdn_info.pop(idx, None)
+                self._cdn_info.pop(state_key, None)
                 return None
             except RequestTokenInvalid:
                 LOGGER.warning(
                     f"HypertgDL CDN RequestTokenInvalid dc={cdn_dc} — fallback to non-CDN"
                 )
-                self._cdn_info.pop(idx, None)
+                self._cdn_info.pop(state_key, None)
                 return None
             except (ConnectionError, OSError, TimeoutError) as e:
                 LOGGER.warning(f"HypertgDL CDN {type(e).__name__}: {e} dc={cdn_dc}")
@@ -294,14 +299,15 @@ class HypertgDownload(HypertgTransfer):
                         await sess.stop()
                     except Exception:
                         pass
-                    self._cdn_sessions.pop((idx, cdn_dc), None)
-                    sess = await self._get_cdn_session(idx, cdn_dc, client)
+                    self._cdn_sessions.pop((idx, lane, cdn_dc), None)
+                    sess = await self._get_cdn_session(idx, cdn_dc, client, lane)
                     await sleep(1)
         return None
 
-    async def _pipeline_fetch(self, idx, location, start, end, fid, queue, csz):
+    async def _pipeline_fetch(self, idx, location, start, end, fid, queue, csz, lane):
         cname = self.clients[idx].me.username
-        sess = await self._get_session(idx, fid.dc_id)
+        sess = await self._get_session(idx, fid.dc_id, lane=lane)
+        state_key = self._lane_key(idx, lane)
         loc = location
         first_off = start - (start % csz)
         first_trim = start - first_off
@@ -336,9 +342,9 @@ class HypertgDownload(HypertgTransfer):
             max_attempts = 3
             for attempt in range(max_attempts):
                 try:
-                    cdn = self._cdn_info.get(idx)
+                    cdn = self._cdn_info.get(state_key)
                     if cdn:
-                        chunk = await self._cdnpull(idx, cdn, off, csz)
+                        chunk = await self._cdnpull(idx, cdn, off, csz, lane)
                         if chunk is not None:
                             return s, off, chunk
                     result = await self._do_req(
@@ -347,11 +353,11 @@ class HypertgDownload(HypertgTransfer):
                     if isinstance(result, tuple):
                         _, dc_or_ref = result
                         if isinstance(dc_or_ref, dict):
-                            self._cdn_info[idx] = dc_or_ref
-                            chunk = await self._cdnpull(idx, dc_or_ref, off, csz)
+                            self._cdn_info[state_key] = dc_or_ref
+                            chunk = await self._cdnpull(idx, dc_or_ref, off, csz, lane)
                             if chunk is not None:
                                 return s, off, chunk
-                            self._cdn_info.pop(idx, None)
+                            self._cdn_info.pop(state_key, None)
                             await sleep(attempt + 1)
                             continue
                         if dc_or_ref == -1:
@@ -371,7 +377,9 @@ class HypertgDownload(HypertgTransfer):
                                 return s, off, b""
                             await sleep(min(3, pipe_timeouts))
                             continue
-                        my_sess = await self._get_session(idx, dc_or_ref, force=True)
+                        my_sess = await self._get_session(
+                            idx, dc_or_ref, force=True, lane=lane
+                        )
                         sess = my_sess
                         await sleep(attempt + 1)
                         continue
@@ -482,7 +490,7 @@ class HypertgDownload(HypertgTransfer):
                     f.cancel()
         return failed_offsets
 
-    async def _part(self, start, end, final_path, ci, fid, csz):
+    async def _part(self, start, end, final_path, ci, fid, csz, lane):
         cname = self.clients[ci].me.username
         q = Queue(maxsize=self.pipeline_depth + 1)
         err = [None]
@@ -493,7 +501,7 @@ class HypertgDownload(HypertgTransfer):
             nonlocal failed_offsets
             try:
                 result = await self._pipeline_fetch(
-                    ci, self._location(fid), start, end, fid, q, csz
+                    ci, self._location(fid), start, end, fid, q, csz, lane
                 )
                 if isinstance(result, set):
                     failed_offsets = result
@@ -650,6 +658,7 @@ class HypertgDownload(HypertgTransfer):
                             assigns[i],
                             fid_map[assigns[i]],
                             self.chunk_size,
+                            i,
                         )
                     )
                 )
@@ -760,6 +769,7 @@ class HypertgDownload(HypertgTransfer):
                             bot_idx,
                             fid_map[bot_idx],
                             self.chunk_size,
+                            i,
                         )
                     )
                     bot_task_map.append((bot_idx, bucket, task))

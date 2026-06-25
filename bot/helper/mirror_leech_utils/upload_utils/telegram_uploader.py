@@ -76,7 +76,11 @@ class TelegramUploader:
             HypertgUpload(self)
             if Config.USE_HYPER
             and Config.LEECH_DUMP_CHAT
-            and len(TgClient.helper_bots) != 0
+            and (
+                (TgClient.user is not None or len(TgClient.helper_users) != 0)
+                if self._user_session
+                else (TgClient.bot is not None or len(TgClient.helper_bots) != 0)
+            )
             else None
         )
 

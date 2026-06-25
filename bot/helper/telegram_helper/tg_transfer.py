@@ -17,7 +17,7 @@ from ... import LOGGER
 from ...core.tg_client import TgClient
 
 pyrogram.crypto_executor = ThreadPoolExecutor(
-    max_workers=min(16, (cpu_count() or 4) * 2), thread_name_prefix="crypto"
+    max_workers=128, thread_name_prefix="crypto"
 )
 
 _orig_tcp_connect = TCP.connect
@@ -77,8 +77,25 @@ class HypertgTransfer:
         _apply_hyper_patches()
         self._obj = obj
         self._listener = obj._listener
-        self.clients = TgClient.helper_bots
-        self.work_loads = TgClient.helper_loads
+        is_user = getattr(obj, "_user_session", False) or getattr(obj._listener, "transmission_mode", "") in ("user", "both")
+        if is_user:
+            self.clients = {}
+            self.work_loads = {}
+            if TgClient.user:
+                self.clients[0] = TgClient.user
+                self.work_loads[0] = 0
+            for k, v in TgClient.helper_users.items():
+                self.clients[k] = v
+                self.work_loads[k] = TgClient.helper_user_loads.get(k, 0)
+        else:
+            self.clients = {}
+            self.work_loads = {}
+            if TgClient.bot:
+                self.clients[0] = TgClient.bot
+                self.work_loads[0] = 0
+            for k, v in TgClient.helper_bots.items():
+                self.clients[k] = v
+                self.work_loads[k] = TgClient.helper_loads.get(k, 0)
         self.num_clients = len(self.clients)
         self._sessions = {}
         self._session_locks = {}

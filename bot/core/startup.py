@@ -47,30 +47,45 @@ async def update_qb_options():
     if not TorrentManager.qbittorrent:
         LOGGER.warning("qBittorrent is not initialized. Skipping options update.")
         return
-    pwd = _qbit_password()
-    if not qbit_options:
-        opt = await TorrentManager.qbittorrent.app.preferences()
-        qbit_options.update(opt)
-        del qbit_options["listen_port"]
-        for k in list(qbit_options.keys()):
-            if k.startswith("rss"):
-                del qbit_options[k]
-        qbit_options["web_ui_password"] = pwd
-        await TorrentManager.qbittorrent.app.set_preferences({"web_ui_password": pwd})
-    else:
-        if qbit_options.get("web_ui_password") in ("admin", "admin1", ""):
+    try:
+        pwd = _qbit_password()
+        if not qbit_options:
+            opt = await TorrentManager.qbittorrent.app.preferences()
+            if not opt:
+                LOGGER.warning("qBittorrent returned no preferences.")
+                return
+            qbit_options.update(opt)
+            qbit_options.pop("listen_port", None)
+            for k in list(qbit_options.keys()):
+                if k.startswith("rss"):
+                    del qbit_options[k]
             qbit_options["web_ui_password"] = pwd
-        await TorrentManager.qbittorrent.app.set_preferences(qbit_options)
+            await TorrentManager.qbittorrent.app.set_preferences(
+                {"web_ui_password": pwd}
+            )
+        else:
+            if qbit_options.get("web_ui_password") in ("admin", "admin1", ""):
+                qbit_options["web_ui_password"] = pwd
+            await TorrentManager.qbittorrent.app.set_preferences(qbit_options)
+    except Exception as e:
+        LOGGER.error(f"Failed to update qBittorrent options: {e}")
 
 
 
 async def update_aria2_options():
     LOGGER.info("Get aria2 options from server")
-    if not aria2_options:
-        op = await TorrentManager.aria2.getGlobalOption()
-        aria2_options.update(op)
-    else:
-        await TorrentManager.aria2.changeGlobalOption(aria2_options)
+    if not TorrentManager.aria2:
+        LOGGER.warning("Aria2 is not initialized. Skipping options update.")
+        return
+    try:
+        if not aria2_options:
+            op = await TorrentManager.aria2.getGlobalOption()
+            if op:
+                aria2_options.update(op)
+        else:
+            await TorrentManager.aria2.changeGlobalOption(aria2_options)
+    except Exception as e:
+        LOGGER.error(f"Failed to update aria2 options: {e}")
 
 
 async def update_nzb_options():
@@ -278,6 +293,16 @@ async def save_settings():
 
 
 async def update_variables():
+    auth_chats.clear()
+    sudo_users.clear()
+    excluded_extensions[:] = ["aria2", "!qB"]
+    drives_names.clear()
+    drives_ids.clear()
+    index_urls.clear()
+    list_drives_dict.clear()
+    categories_dict.clear()
+    shortener_dict.clear()
+
     if (
         Config.LEECH_SPLIT_SIZE > TgClient.MAX_SPLIT_SIZE
         or Config.LEECH_SPLIT_SIZE == 2097152000

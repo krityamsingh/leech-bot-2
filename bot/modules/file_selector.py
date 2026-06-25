@@ -128,9 +128,16 @@ async def confirm_selection(_, query):
         id_ = data[3]
         if hasattr(task, "seeding"):
             if task.listener.is_qbit:
-                tor_info = (
-                    await TorrentManager.qbittorrent.torrents.info(hashes=[id_])
-                )[0]
+                torrents = await TorrentManager.qbittorrent.torrents.info(
+                    hashes=[id_]
+                )
+                if not torrents:
+                    await query.answer(
+                        "Torrent is no longer available!", show_alert=True
+                    )
+                    await delete_message(message)
+                    return
+                tor_info = torrents[0]
                 path = tor_info.content_path.rsplit("/", 1)[0]
                 res = await TorrentManager.qbittorrent.torrents.files(id_)
                 for f in res:

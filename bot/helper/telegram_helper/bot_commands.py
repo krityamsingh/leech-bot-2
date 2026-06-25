@@ -13,7 +13,7 @@ class BotCommands:
         "Ytdl": ["ytdl", "y"],
         "UpHoster": ["uphoster", "up"],
         "NzbMirror": ["nzbmirror", "nm"],
-        "Leech": ["leech", "l2"],
+        "Leech": ["leech", "l"],
         "QbLeech": ["qbleech", "ql"],
         "JdLeech": ["jdleech", "jl"],
         "YtdlLeech": ["ytdlleech", "yl"],

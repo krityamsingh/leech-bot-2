@@ -62,6 +62,14 @@ async def _pick_clients(wl, clients, count):
 class HypertgDownload(HypertgTransfer):
     def __init__(self, obj):
         super().__init__(obj)
+        source_client = getattr(getattr(obj, "_listener", None), "client", None)
+        if source_client is not None and all(
+            source_client is not client for client in self.clients.values()
+        ):
+            source_key = 0 if 0 not in self.clients else max(self.clients.keys()) + 1
+            self.clients[source_key] = source_client
+            self.work_loads[source_key] = self.work_loads.get(source_key, 0)
+            self.num_clients = len(self.clients)
         self.chunk_size = min(
             max(Config.HYPER_CHUNK or _MAX_CHUNK, _MIN_CHUNK), _MAX_CHUNK
         )
@@ -88,6 +96,14 @@ class HypertgDownload(HypertgTransfer):
             self._ref_cache.pop(next(iter(self._ref_cache)))
         self._ref_cache[idx] = data
 
+    def _message_fid(self):
+        try:
+            media = self._media_of(self.message)
+            fid_str = media.file_id if hasattr(media, "file_id") else None
+            return FileId.decode(fid_str) if fid_str else None
+        except Exception:
+            return None
+
     async def _fetch_ref(self, idx, client, retries=3, force=False):
         if not force:
             cached = self._ref_get(idx)
@@ -112,6 +128,14 @@ class HypertgDownload(HypertgTransfer):
                 last_err = e
                 if attempt < retries - 1:
                     await sleep(attempt + 1)
+        if fid := self._message_fid():
+            cname = getattr(getattr(client, "me", None), "username", None)
+            LOGGER.warning(
+                "HypertgDL using source file reference for "
+                f"{cname or 'client'} after refetch failed: {last_err}"
+            )
+            self._ref_put(idx, fid)
+            return fid
         raise ValueError(
             f"Failed to get file ref with {client.me.username}: {last_err}"
         )
@@ -509,8 +533,36 @@ class HypertgDownload(HypertgTransfer):
             sub("\\\\", "/", os.path.join(self.directory, self.file_name))
         )
 
+        self.num_clients = len(self.clients)
+        if self.num_clients == 0:
+            LOGGER.error("HypertgDL no clients available")
+            return None
+
         n_use = min(self.num_parts, self.num_clients)
         cidx = await _pick_clients(self.work_loads, self.clients, n_use)
+        if not cidx:
+            LOGGER.error("HypertgDL no clients selected")
+            return None
+
+        fid_map = {}
+        bad_ref_clients = []
+        for ci in cidx:
+            try:
+                fid_map[ci] = await self._fetch_ref(ci, self.clients[ci])
+            except Exception as e:
+                cname = getattr(getattr(self.clients[ci], "me", None), "username", ci)
+                bad_ref_clients.append(ci)
+                LOGGER.warning(f"HypertgDL skipping {cname}: ref fetch failed: {e}")
+
+        if not fid_map:
+            LOGGER.error("HypertgDL ref fail: no selected client could resolve media")
+            async with _load_lock:
+                for k in cidx:
+                    self.work_loads[k] = max(0, self.work_loads.get(k, 0) - 1)
+            return None
+
+        cidx = list(fid_map.keys())
+        n_use = len(cidx)
 
         min_part = 1 * MB
         n_parts = (
@@ -525,13 +577,11 @@ class HypertgDownload(HypertgTransfer):
         assigns = [cidx[i % n_use] for i in range(n_parts)]
 
         unique_clients = set(assigns)
-        fid_map = {}
-        try:
-            for ci in unique_clients:
-                fid_map[ci] = await self._fetch_ref(ci, self.clients[ci])
-        except Exception as e:
-            LOGGER.error(f"HypertgDL ref fail: {e}")
-            return None
+        if bad_ref_clients:
+            LOGGER.info(
+                "HypertgDL active clients after ref check: "
+                f"{n_use}/{n_use + len(bad_ref_clients)}"
+            )
 
         first_fid = fid_map[assigns[0]]
         try:
@@ -728,6 +778,8 @@ class HypertgDownload(HypertgTransfer):
             async with _load_lock:
                 for k in cidx:
                     self.work_loads[k] = max(0, self.work_loads.get(k, 0) - 1)
+                for k in bad_ref_clients:
+                    self.work_loads[k] = max(0, self.work_loads.get(k, 0) - 1)
             for s in self._cdn_sessions.values():
                 try:
                     if s.is_connected:
@@ -746,28 +798,36 @@ class HypertgDownload(HypertgTransfer):
                 except (ValueError, TypeError):
                     dump_chat = None
             if dump_chat:
-                last_err = None
-                for copy_client in self._copy_clients():
-                    try:
-                        self.message = await copy_client.copy_message(
-                            chat_id=dump_chat,
-                            from_chat_id=message.chat.id,
-                            message_id=message.id,
-                            disable_notification=True,
-                        )
-                        break
-                    except Exception as e:
-                        last_err = e
-                        cname = getattr(
-                            getattr(copy_client, "me", None), "username", None
-                        )
-                        LOGGER.warning(
-                            "HypertgDL copy fail with "
-                            f"{cname or 'client'}: {e} "
-                            f"(from={message.chat.id} to={dump_chat})"
-                        )
+                if getattr(getattr(message, "chat", None), "id", None) == dump_chat:
+                    self.message = message
                 else:
-                    raise RuntimeError(f"Cannot copy to dump chat: {last_err}")
+                    last_err = None
+                    for copy_client in self._copy_clients():
+                        try:
+                            self.message = await copy_client.copy_message(
+                                chat_id=dump_chat,
+                                from_chat_id=message.chat.id,
+                                message_id=message.id,
+                                disable_notification=True,
+                            )
+                            self._media_of(self.message)
+                            break
+                        except Exception as e:
+                            last_err = e
+                            cname = getattr(
+                                getattr(copy_client, "me", None), "username", None
+                            )
+                            LOGGER.warning(
+                                "HypertgDL copy fail with "
+                                f"{cname or 'client'}: {e} "
+                                f"(from={message.chat.id} to={dump_chat})"
+                            )
+                    else:
+                        LOGGER.warning(
+                            "HypertgDL using source message without dump copy: "
+                            f"{last_err}"
+                        )
+                        self.message = message
             self.dump_chat = dump_chat or message.chat.id
             self.message = self.message or message
             media = self._media_of(self.message)

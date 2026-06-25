@@ -32,6 +32,7 @@ class TelegramDownloadHelper:
         self._start_time = 1
         self._listener = listener
         self._id = ""
+        self._gid = ""
         self.session = ""
         is_user = self._listener.transmission_mode in ("user", "both")
         self._hyper_dl = (
@@ -57,6 +58,7 @@ class TelegramDownloadHelper:
         async with global_lock:
             GLOBAL_GID[file_id] = gid
         self._id = file_id
+        self._gid = gid
         async with task_dict_lock:
             task_dict[self._listener.mid] = TelegramStatus(
                 self._listener, self, gid, "dl", "hdl" if self._hyper_dl else ""
@@ -94,6 +96,15 @@ class TelegramDownloadHelper:
         async with global_lock:
             GLOBAL_GID.pop(self._id)
         return
+
+    async def _mark_standard_download(self):
+        if not self._hyper_dl:
+            return
+        self._hyper_dl = False
+        async with task_dict_lock:
+            task_dict[self._listener.mid] = TelegramStatus(
+                self._listener, self, self._gid, "dl", ""
+            )
 
     async def _download(self, message, path):
         try:
@@ -136,8 +147,13 @@ class TelegramDownloadHelper:
                     self._hyper_dl_instance = None
                     if download is None and not self._listener.is_cancelled:
                         LOGGER.warning("Hyper Telegram download failed; using fallback.")
+                        await self._mark_standard_download()
                         download = await _standard_download()
-                except Exception:
+                except Exception as e:
+                    LOGGER.warning(
+                        f"Hyper Telegram download errored; using fallback: {e}"
+                    )
+                    await self._mark_standard_download()
                     download = await _standard_download()
             else:
                 download = await _standard_download()

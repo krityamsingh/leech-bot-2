@@ -42,6 +42,8 @@ from ..telegram_helper.tg_transfer import MB, HypertgTransfer
 KB = 1024
 _MIN_CHUNK = 64 * KB
 _MAX_CHUNK = 1 * MB
+_MIN_PART = 8 * MB
+_TARGET_PART = 16 * MB
 _DEFAULT_PIPELINE = 64
 _MIN_PIPELINE = 4
 _MAX_PIPELINE_MULT = 4
@@ -63,13 +65,8 @@ class HypertgDownload(HypertgTransfer):
     def __init__(self, obj):
         super().__init__(obj)
         source_client = getattr(getattr(obj, "_listener", None), "client", None)
-        if source_client is not None and all(
-            source_client is not client for client in self.clients.values()
-        ):
-            source_key = 0 if 0 not in self.clients else max(self.clients.keys()) + 1
-            self.clients[source_key] = source_client
-            self.work_loads[source_key] = self.work_loads.get(source_key, 0)
-            self.num_clients = len(self.clients)
+        self._merge_download_clients(source_client)
+        LOGGER.info(f"HypertgDL merged download clients={self.num_clients}")
         self.chunk_size = min(
             max(Config.HYPER_CHUNK or _MAX_CHUNK, _MIN_CHUNK), _MAX_CHUNK
         )
@@ -87,6 +84,40 @@ class HypertgDownload(HypertgTransfer):
         self._ref_cache = {}
         self._cdn_info = {}
         self._cdn_sessions = {}
+
+    def _merge_download_clients(self, source_client):
+        ordered = []
+
+        if TgClient.user:
+            ordered.append((TgClient.user, 0))
+        ordered.extend(
+            (client, TgClient.helper_user_loads.get(idx, 0))
+            for idx, client in TgClient.helper_users.items()
+        )
+        ordered.extend(
+            (client, self.work_loads.get(idx, 0))
+            for idx, client in self.clients.items()
+        )
+        if source_client:
+            ordered.append((source_client, 0))
+        if TgClient.bot:
+            ordered.append((TgClient.bot, 0))
+        ordered.extend(
+            (client, TgClient.helper_loads.get(idx, 0))
+            for idx, client in TgClient.helper_bots.items()
+        )
+
+        self.clients = {}
+        self.work_loads = {}
+        seen = set()
+        for client, load in ordered:
+            if client is None or id(client) in seen:
+                continue
+            seen.add(id(client))
+            idx = len(self.clients)
+            self.clients[idx] = client
+            self.work_loads[idx] = load
+        self.num_clients = len(self.clients)
 
     def _ref_get(self, idx):
         return self._ref_cache.get(idx)
@@ -302,7 +333,7 @@ class HypertgDownload(HypertgTransfer):
                 return s, off, b""
             my_sess = sess
             my_loc = loc
-            max_attempts = 1
+            max_attempts = 3
             for attempt in range(max_attempts):
                 try:
                     cdn = self._cdn_info.get(idx)
@@ -564,17 +595,28 @@ class HypertgDownload(HypertgTransfer):
         cidx = list(fid_map.keys())
         n_use = len(cidx)
 
-        min_part = 1 * MB
-        n_parts = (
-            min(n_use, max(1, self.file_size // min_part))
+        min_part = max(self.chunk_size * 8, _MIN_PART)
+        target_part = max(self.chunk_size * 16, _TARGET_PART)
+        configured_parts = Config.HYPER_THREADS or min(
+            _HIGH_WORKERS, max(n_use, n_use * 4)
+        )
+        size_parts = (
+            max(1, (self.file_size + target_part - 1) // target_part)
             if self.file_size >= min_part
             else 1
         )
+        chunk_parts = max(1, (self.file_size + self.chunk_size - 1) // self.chunk_size)
+        n_parts = min(configured_parts, chunk_parts, max(n_use, size_parts))
         base_pipe = max(Config.HYPER_PIPELINE or _DEFAULT_PIPELINE, _MIN_PIPELINE)
         self.pipeline_depth = max(base_pipe // max(n_parts, 1), _MIN_PIPELINE)
         psz = self.file_size // n_parts if n_parts > 0 else self.file_size
         ranges = [(i * psz, min((i + 1) * psz, self.file_size)) for i in range(n_parts)]
         assigns = [cidx[i % n_use] for i in range(n_parts)]
+        LOGGER.info(
+            "HypertgDL plan "
+            f"clients={n_use} parts={n_parts} chunk={self.chunk_size} "
+            f"pipe={self.pipeline_depth}"
+        )
 
         unique_clients = set(assigns)
         if bad_ref_clients:

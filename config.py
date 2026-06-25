@@ -26,7 +26,7 @@ WEB_ACCESS_PASSWORD = ""
 HELPER_TOKENS = "8694415781:AAGMjpQQf8RbmRgd8sbTccok4dSdXje6CYA"          # Add extra bot tokens here for parallel TG uploads
 USE_HYPER = True            # Enable multi-threaded Telegram upload/download
 HYPER_THREADS = 64          # Number of parallel upload/download workers (Default: 64)
-HYPER_PIPELINE = 4          # Concurrent requests per worker (Default: 4)
+HYPER_PIPELINE = 32          # Concurrent requests per worker (Default: 32)
 HYPER_CHUNK = 512 * 1024    # Working chunk size (Default: 512KB)
 
 # ── Upload Destination ────────────────────────────────────────────────────────

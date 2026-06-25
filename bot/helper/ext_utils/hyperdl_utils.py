@@ -515,6 +515,8 @@ class HypertgDownload(HypertgTransfer):
             if self.file_size >= min_part
             else 1
         )
+        base_pipe = max(Config.HYPER_PIPELINE or _DEFAULT_PIPELINE, _MIN_PIPELINE)
+        self.pipeline_depth = max(base_pipe // max(n_parts, 1), _MIN_PIPELINE)
         psz = self.file_size // n_parts if n_parts > 0 else self.file_size
         ranges = [(i * psz, min((i + 1) * psz, self.file_size)) for i in range(n_parts)]
         assigns = [cidx[i % n_use] for i in range(n_parts)]

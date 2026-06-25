@@ -22,12 +22,21 @@ from ..mirror_leech_utils.status_utils.qbit_status import QbittorrentStatus
 from ..telegram_helper.message_utils import update_status_message
 
 
+def _torrent_tag(tor):
+    tags = getattr(tor, "tags", None) or []
+    for tag in tags:
+        if tag in qb_torrents:
+            return tag
+    return tags[0] if tags else str(getattr(tor, "hash", ""))
+
+
 async def _remove_torrent(hash_, tag):
     await TorrentManager.qbittorrent.torrents.delete([hash_], True)
     async with qb_listener_lock:
         if tag in qb_torrents:
             del qb_torrents[tag]
-    await TorrentManager.qbittorrent.torrents.delete_tags([tag])
+    if tag:
+        await TorrentManager.qbittorrent.torrents.delete_tags([tag])
 
 
 @new_task
@@ -38,7 +47,7 @@ async def _on_download_error(err, tor, button=None, is_limit=False):
         await task.listener.on_download_error(err, button, is_limit)
     await TorrentManager.qbittorrent.torrents.stop([ext_hash])
     await sleep(0.3)
-    await _remove_torrent(ext_hash, tor.tags[0])
+    await _remove_torrent(ext_hash, _torrent_tag(tor))
 
 
 @new_task
@@ -48,7 +57,7 @@ async def _on_seed_finish(tor):
     if task := await get_task_by_gid(ext_hash[:12]):
         msg = f"Seeding stopped with Ratio: {round(tor.ratio, 3)} and Time: {get_readable_time(int(tor.seeding_time.total_seconds() or '0'))}"
         await task.listener.on_upload_error(msg)
-    await _remove_torrent(ext_hash, tor.tags[0])
+    await _remove_torrent(ext_hash, _torrent_tag(tor))
 
 
 @new_task
@@ -75,7 +84,7 @@ async def _size_check(tor):
 @new_task
 async def _on_download_complete(tor):
     ext_hash = tor.hash
-    tag = tor.tags[0]
+    tag = _torrent_tag(tor)
     if task := await get_task_by_gid(ext_hash[:12]):
         if not task.listener.seed:
             await TorrentManager.qbittorrent.torrents.stop([ext_hash])
@@ -127,7 +136,7 @@ async def _qb_listener():
                     intervals["qb"] = ""
                     break
                 for tor_info in torrents:
-                    tag = tor_info.tags[0]
+                    tag = _torrent_tag(tor_info)
                     if tag not in qb_torrents:
                         continue
                     state = tor_info.state

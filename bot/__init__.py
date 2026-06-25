@@ -22,6 +22,7 @@ from logging import (
     getLogger,
 )
 from os import cpu_count
+from sys import stdout
 from time import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -44,7 +45,7 @@ bot_start_time = time()
 basicConfig(
     format="[%(asctime)s] [%(levelname)s] - %(message)s",  #  [%(filename)s:%(lineno)d]
     datefmt="%d-%b-%y %I:%M:%S %p",
-    handlers=[FileHandler("log.txt"), StreamHandler()],
+    handlers=[FileHandler("log.txt"), StreamHandler(stdout)],
     level=INFO,
 )
 

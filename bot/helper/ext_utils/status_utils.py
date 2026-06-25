@@ -144,6 +144,9 @@ def get_readable_file_size(size_in_bytes):
 
 
 def get_readable_time(seconds: int):
+    seconds = int(seconds or 0)
+    if seconds <= 0:
+        return "0s"
     periods = [("d", 86400), ("h", 3600), ("m", 60), ("s", 1)]
     result = ""
     for period_name, period_seconds in periods:
@@ -199,12 +202,14 @@ def speed_string_to_bytes(size_text: str):
 def get_progress_bar_string(pct):
     pct = float(str(pct).strip("%"))
     p = min(max(pct, 0), 100)
-    cFull = int(p // 8)
+    if p >= 100:
+        return f"[{'■' * 12}]"
+    cFull = min(int(p // 8), 12)
     cPart = int(p % 8 - 1)
     p_str = "■" * cFull
-    if cPart >= 0:
+    if cFull < 12 and cPart >= 0:
         p_str += ["▤", "▥", "▦", "▧", "▨", "▩", "■"][cPart]
-    p_str += "□" * (12 - cFull)
+    p_str += "□" * (12 - len(p_str))
     return f"[{p_str}]"
 
 
@@ -255,11 +260,26 @@ async def get_readable_message(sid, is_user, page_no=1, status="All", page_step=
         msg += f"<b><i>{escape(f'{task.name()}')}</i></b>"
         if task.listener.subname:
             msg += f"\n┖ <b>Sub Name</b> → <i>{task.listener.subname}</i>"
-        elapsed = time() - task.listener.message.date.timestamp()
+        message = task.listener.message
+        user = message.from_user or message.sender_chat
+        if user:
+            mention_attr = getattr(user, "mention", None)
+            mention = (
+                mention_attr(style="html")
+                if callable(mention_attr)
+                else escape(
+                    getattr(user, "title", getattr(user, "first_name", str(user.id)))
+                )
+            )
+            user_id = getattr(user, "id", "N/A")
+        else:
+            mention = "Unknown"
+            user_id = "N/A"
+        elapsed = time() - message.date.timestamp() if message.date else 0
 
-        msg += f"\n\n<b>Task By {task.listener.message.from_user.mention(style='html')} </b> ( #ID{task.listener.message.from_user.id} )"
+        msg += f"\n\n<b>Task By {mention} </b> ( #ID{user_id} )"
         if task.listener.is_super_chat:
-            msg += f" <i>[<a href='{task.listener.message.link}'>Link</a>]</i>"
+            msg += f" <i>[<a href='{getattr(message, 'link', '')}'>Link</a>]</i>"
 
         if (
             tstatus not in [MirrorStatus.STATUS_SEED, MirrorStatus.STATUS_QUEUEUP]

@@ -289,13 +289,17 @@ class TgClient:
     @classmethod
     async def reload(cls):
         async with cls._lock:
-            await cls.bot.restart()
+            clients = []
+            if cls.bot:
+                clients.append(cls.bot.restart())
             if cls.user:
-                await cls.user.restart()
+                clients.append(cls.user.restart())
             if cls.helper_bots:
-                await gather(*[h_bot.restart() for h_bot in cls.helper_bots.values()])
+                clients.extend(h_bot.restart() for h_bot in cls.helper_bots.values())
             if cls.helper_users:
-                await gather(
-                    *[h_user.restart() for h_user in cls.helper_users.values()]
-                )
-            LOGGER.info("All Client(s) restarted")
+                clients.extend(h_user.restart() for h_user in cls.helper_users.values())
+            if clients:
+                await gather(*clients, return_exceptions=True)
+                LOGGER.info("All Client(s) restarted")
+            else:
+                LOGGER.warning("No Telegram clients available to restart")

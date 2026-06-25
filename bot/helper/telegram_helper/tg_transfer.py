@@ -165,8 +165,8 @@ class HypertgTransfer:
                 break
         s.is_connected.set()
 
-    def _get_lock(self, client_id, dc_id):
-        key = (client_id, dc_id)
+    def _get_lock(self, client_id, dc_id, lane=None):
+        key = (client_id, dc_id, lane)
         if key not in self._session_locks:
             self._session_locks[key] = Lock()
         return self._session_locks[key]
@@ -199,8 +199,9 @@ class HypertgTransfer:
         client.media_sessions[dc_id] = s
         return s
 
-    async def _get_session(self, idx, dc_id, force=False):
-        s = self._sessions.get(idx)
+    async def _get_session(self, idx, dc_id, force=False, lane=None):
+        session_key = (idx, lane) if lane is not None else idx
+        s = self._sessions.get(session_key)
         if s and not force:
             if s.is_connected and s.dc_id == dc_id:
                 return s
@@ -208,14 +209,20 @@ class HypertgTransfer:
                 await s.stop()
             except Exception:
                 pass
-        lock = self._get_lock(id(self.clients[idx]), dc_id)
+        lock = self._get_lock(id(self.clients[idx]), dc_id, lane)
         async with lock:
-            s = self._sessions.get(idx)
+            s = self._sessions.get(session_key)
             if s and not force:
                 if s.is_connected and s.dc_id == dc_id:
                     return s
             s = await self._mk_session(self.clients[idx], dc_id)
-            self._sessions[idx] = s
+            if lane is not None:
+                try:
+                    if self.clients[idx].media_sessions.get(dc_id) is s:
+                        del self.clients[idx].media_sessions[dc_id]
+                except Exception:
+                    pass
+            self._sessions[session_key] = s
         return s
 
     async def _warmup(self, indices, dc_id):

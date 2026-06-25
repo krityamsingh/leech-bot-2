@@ -73,6 +73,9 @@ class TelegramDownloadHelper:
         if self._listener.is_cancelled:
             if self.session == "user":
                 TgClient.user.stop_transmission()
+            elif self.session == "husers":
+                for huser in TgClient.helper_users.values():
+                    huser.stop_transmission()
             elif self.session == "hbots":
                 for hbot in TgClient.helper_bots.values():
                     hbot.stop_transmission()
@@ -95,7 +98,10 @@ class TelegramDownloadHelper:
     async def _download(self, message, path):
         try:
             async def _standard_download():
-                if Config.TRANSMISSION_MODE in ("user", "both") and TgClient.user:
+                if (
+                    self._listener.transmission_mode in ("user", "both")
+                    and TgClient.user
+                ):
                     try:
                         user_message = await TgClient.user.get_messages(
                             chat_id=message.chat.id, message_ids=message.id
@@ -103,7 +109,8 @@ class TelegramDownloadHelper:
                         return await user_message.download(
                             file_name=path, progress=self._on_download_progress
                         )
-                    except Exception:
+                    except Exception as e:
+                        LOGGER.warning(f"User session download fallback to bot: {e}")
                         pass
                 return await message.download(
                     file_name=path, progress=self._on_download_progress
@@ -155,7 +162,10 @@ class TelegramDownloadHelper:
         self.session = session
         if not self.session:
             if self._hyper_dl:
-                self.session = "user" if self._listener.transmission_mode in ("user", "both") else "hbots"
+                if self._listener.transmission_mode in ("user", "both"):
+                    self.session = "user" if TgClient.user else "husers"
+                else:
+                    self.session = "hbots"
             elif (
                 self._listener.transmission_mode in ("user", "both")
                 and self._listener.is_super_chat

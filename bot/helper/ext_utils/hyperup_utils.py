@@ -109,7 +109,7 @@ class HypertgUpload(HypertgTransfer):
                 _concurrent = 1
 
             _is_bot = bool(getattr(getattr(up_client, "me", None), "is_bot", True))
-            n_workers = Config.HYPER_THREADS or (16 if _is_bot else 8)
+            n_workers = Config.HYPER_THREADS or (16 if _is_bot else 32)
             n_workers = max(1, n_workers // _concurrent)
 
             fp = open(file_path, "rb", buffering=4 * 1024 * 1024)

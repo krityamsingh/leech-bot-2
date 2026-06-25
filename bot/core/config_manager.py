@@ -95,8 +95,8 @@ class Config:
     MEDIA_GROUP = False
     USE_HYPER = True
     HYPER_THREADS = 0
-    HYPER_PIPELINE = 32
-    HYPER_CHUNK = 512 * 1024
+    HYPER_PIPELINE = 64
+    HYPER_CHUNK = 1024 * 1024
     CPU_LIMIT = 20
     THROTTLE_SERVICES = "auto"
     HYDRA_IP = ""

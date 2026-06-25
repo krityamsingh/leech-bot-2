@@ -130,7 +130,7 @@ class HypertgDownload(HypertgTransfer):
                     await sleep(attempt + 1)
         if fid := self._message_fid():
             cname = getattr(getattr(client, "me", None), "username", None)
-            LOGGER.warning(
+            LOGGER.info(
                 "HypertgDL using source file reference for "
                 f"{cname or 'client'} after refetch failed: {last_err}"
             )

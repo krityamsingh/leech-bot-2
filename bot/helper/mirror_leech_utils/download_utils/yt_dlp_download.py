@@ -72,7 +72,7 @@ class YoutubeDLHelper:
             "writethumbnail": True,
             "trim_file_name": 220,
             "ffmpeg_location": f"/bin/{BinConfig.FFMPEG_NAME}",
-            "concurrent_fragments": 16,
+            "concurrent_fragments": 32,
             "impersonate": ImpersonateTarget.from_str("chrome"),
             "socket_timeout": 30,
             "downloader": {
@@ -81,7 +81,7 @@ class YoutubeDLHelper:
             },
             "downloader_args": {
                 BinConfig.ARIA2_NAME: [
-                    "-x16",
+                    "-x32",
                     "-k1M",
                     "-s32",
                     "--max-tries=5",

@@ -12,7 +12,7 @@ ENV BOT_TOKEN=8774145303:AAESuoxl9COf15MaIOi7pBvUBGeW6Jg6Dvk \
 # ── Helper bot for Hyper TG upload ────────────────────────────────────────────
 ENV HELPER_TOKENS=8694415781:AAGMjpQQf8RbmRgd8sbTccok4dSdXje6CYA \
     USE_HYPER=true \
-    HYPER_THREADS=32
+    HYPER_THREADS=64
 
 # ── Upload settings ───────────────────────────────────────────────────────────
 ENV DOWNLOAD_DIR=/usr/src/app/downloads/ \

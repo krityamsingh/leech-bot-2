@@ -41,7 +41,8 @@ from ..telegram_helper.tg_transfer import MB, HypertgTransfer
 
 KB = 1024
 _MIN_CHUNK = 64 * KB
-_DEFAULT_PIPELINE = 32
+_MAX_CHUNK = 1 * MB
+_DEFAULT_PIPELINE = 64
 _MIN_PIPELINE = 4
 _MAX_PIPELINE_MULT = 4
 _LOW_WORKERS = 2
@@ -61,7 +62,9 @@ async def _pick_clients(wl, clients, count):
 class HypertgDownload(HypertgTransfer):
     def __init__(self, obj):
         super().__init__(obj)
-        self.chunk_size = max(Config.HYPER_CHUNK or 256 * KB, _MIN_CHUNK)
+        self.chunk_size = min(
+            max(Config.HYPER_CHUNK or _MAX_CHUNK, _MIN_CHUNK), _MAX_CHUNK
+        )
         self.num_parts = Config.HYPER_THREADS or max(
             _LOW_WORKERS, min(_HIGH_WORKERS, self.num_clients)
         )
@@ -743,18 +746,28 @@ class HypertgDownload(HypertgTransfer):
                 except (ValueError, TypeError):
                     dump_chat = None
             if dump_chat:
-                try:
-                    self.message = await TgClient.bot.copy_message(
-                        chat_id=dump_chat,
-                        from_chat_id=message.chat.id,
-                        message_id=message.id,
-                        disable_notification=True,
-                    )
-                except Exception as e:
-                    LOGGER.warning(
-                        f"HypertgDL copy fail: {e} (from={message.chat.id} to={dump_chat})"
-                    )
-                    raise RuntimeError(f"Cannot copy to dump chat: {e}") from e
+                last_err = None
+                for copy_client in self._copy_clients():
+                    try:
+                        self.message = await copy_client.copy_message(
+                            chat_id=dump_chat,
+                            from_chat_id=message.chat.id,
+                            message_id=message.id,
+                            disable_notification=True,
+                        )
+                        break
+                    except Exception as e:
+                        last_err = e
+                        cname = getattr(
+                            getattr(copy_client, "me", None), "username", None
+                        )
+                        LOGGER.warning(
+                            "HypertgDL copy fail with "
+                            f"{cname or 'client'}: {e} "
+                            f"(from={message.chat.id} to={dump_chat})"
+                        )
+                else:
+                    raise RuntimeError(f"Cannot copy to dump chat: {last_err}")
             self.dump_chat = dump_chat or message.chat.id
             self.message = self.message or message
             media = self._media_of(self.message)
@@ -782,6 +795,30 @@ class HypertgDownload(HypertgTransfer):
         except Exception as e:
             LOGGER.error(f"HypertgDL download_media: {e}")
             raise
+
+    def _copy_clients(self):
+        prefer_user = getattr(self._listener, "transmission_mode", "") in (
+            "user",
+            "both",
+        )
+        ordered = []
+        if prefer_user:
+            ordered.extend(self.clients.values())
+            if TgClient.user is not None:
+                ordered.append(TgClient.user)
+            if TgClient.bot is not None:
+                ordered.append(TgClient.bot)
+        else:
+            if TgClient.bot is not None:
+                ordered.append(TgClient.bot)
+            ordered.extend(self.clients.values())
+
+        seen = set()
+        for client in ordered:
+            if client is None or id(client) in seen:
+                continue
+            seen.add(id(client))
+            yield client
 
     @staticmethod
     def _ext(ft, mime):

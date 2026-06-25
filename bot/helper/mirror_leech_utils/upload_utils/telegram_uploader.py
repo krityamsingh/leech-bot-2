@@ -408,14 +408,15 @@ class TelegramUploader:
                                     if len(msgs) > 1:
                                         await self._send_media_group(subkey, key, msgs)
                     if self._listener.transmission_mode == "both":
-                        self._user_session = f_size > 2097152000
-                        if self._user_session:
-                            self._sent_msg = await TgClient.user.get_messages(
-                                chat_id=self._sent_msg.chat.id,
-                                message_ids=self._sent_msg.id,
+                        use_user_session = TgClient.user is not None
+                        if use_user_session != self._user_session:
+                            self._user_session = use_user_session
+                            active_client = (
+                                TgClient.user
+                                if self._user_session
+                                else self._listener.client
                             )
-                        else:
-                            self._sent_msg = await self._listener.client.get_messages(
+                            self._sent_msg = await active_client.get_messages(
                                 chat_id=self._sent_msg.chat.id,
                                 message_ids=self._sent_msg.id,
                             )

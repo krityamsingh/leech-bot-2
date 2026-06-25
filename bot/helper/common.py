@@ -505,7 +505,8 @@ class TaskConfig:
                             else:
                                 member = await chat.get_member(uploader_id)
                                 if (
-                                    not member.privileges.can_manage_chat
+                                    not member.privileges
+                                    or not member.privileges.can_manage_chat
                                     or not member.privileges.can_delete_messages
                                 ):
                                     self.transmission_mode = "bot"
@@ -527,7 +528,8 @@ class TaskConfig:
                     ]:
                         member = await chat.get_member(uploader_id)
                         if (
-                            not member.privileges.can_manage_chat
+                            not member.privileges
+                            or not member.privileges.can_manage_chat
                             or not member.privileges.can_delete_messages
                         ):
                             if self.transmission_mode == "bot":

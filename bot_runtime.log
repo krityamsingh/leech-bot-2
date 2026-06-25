@@ -1,0 +1,48 @@
+=== BOT STARTING Thu Jun 25 06:59:09 AM EDT 2026 ===
+[25-Jun-26 04:29:10 PM] [INFO] - Web server started on port 8080
+[2026-06-25 06:59:10 -0400] [3362431] [INFO] Starting gunicorn 26.0.0
+[2026-06-25 06:59:10 -0400] [3362431] [ERROR] Connection in use: ('0.0.0.0', 8080)
+[2026-06-25 06:59:10 -0400] [3362431] [ERROR] connection to ('0.0.0.0', 8080) failed: [Errno 98] Address already in use
+[25-Jun-26 04:29:10 PM] [INFO] - Aria2 initialized successfully.
+[25-Jun-26 04:29:10 PM] [INFO] - Connected to existing qBittorrent Web API.
+[25-Jun-26 04:29:10 PM] [INFO] - qBittorrent initialized successfully.
+[25-Jun-26 04:29:10 PM] [INFO] - Get qBittorrent options from server
+[25-Jun-26 04:29:10 PM] [INFO] - Get aria2 options from server
+[25-Jun-26 04:29:10 PM] [INFO] - Generating client from BOT_TOKEN
+[25-Jun-26 04:29:10 PM] [INFO] - Generating helper client from HELPER_TOKENS
+[2026-06-25 06:59:11 -0400] [3362431] [ERROR] Connection in use: ('0.0.0.0', 8080)
+[2026-06-25 06:59:11 -0400] [3362431] [ERROR] connection to ('0.0.0.0', 8080) failed: [Errno 98] Address already in use
+[2026-06-25 06:59:12 -0400] [3362431] [ERROR] Connection in use: ('0.0.0.0', 8080)
+[2026-06-25 06:59:12 -0400] [3362431] [ERROR] connection to ('0.0.0.0', 8080) failed: [Errno 98] Address already in use
+[2026-06-25 06:59:13 -0400] [3362431] [ERROR] Connection in use: ('0.0.0.0', 8080)
+[2026-06-25 06:59:13 -0400] [3362431] [ERROR] connection to ('0.0.0.0', 8080) failed: [Errno 98] Address already in use
+[2026-06-25 06:59:14 -0400] [3362431] [ERROR] Connection in use: ('0.0.0.0', 8080)
+[2026-06-25 06:59:14 -0400] [3362431] [ERROR] connection to ('0.0.0.0', 8080) failed: [Errno 98] Address already in use
+[2026-06-25 06:59:15 -0400] [3362431] [ERROR] Can't connect to ('0.0.0.0', 8080)
+[25-Jun-26 04:29:16 PM] [INFO] - WZ Bot : [@Giyu_Leechx_Bot] Started!
+[25-Jun-26 04:29:18 PM] [INFO] - Helper Bot [@Testingx22_Bot] Started!
+[25-Jun-26 04:29:19 PM] [INFO] - Creating Telegraph Account
+[25-Jun-26 04:29:19 PM] [INFO] - Cleaning Download Directory
+[25-Jun-26 04:29:19 PM] [INFO] - tunnel_monitor: background monitor started
+[25-Jun-26 04:29:19 PM] [INFO] - Web UI: qBittorrent: /qbit/?pass=a4e741b1cbe0bac64b971b7c
+[25-Jun-26 04:29:19 PM] [INFO] - Web UI: SABnzbd: /nzb/?pass=1d4572cc482ebe0085422933
+[25-Jun-26 04:29:19 PM] [INFO] - WZ Client(s) & Services Started !
+[25-Jun-26 04:29:19 PM] [INFO] - tunnel_monitor: started
+[25-Jun-26 04:29:19 PM] [INFO] - Fetched Package Versions!
+[25-Jun-26 04:29:38 PM] [WARNING] - RSS_CHAT not added! Shutting down rss scheduler...
+[25-Jun-26 04:45:59 PM] [INFO] - Running Pre Task Checks ...
+[25-Jun-26 04:46:05 PM] [INFO] - Running Pre Task Checks ...
+[25-Jun-26 04:46:07 PM] [INFO] - Download from Telegram: @AniMe_YoGi  Classroom of the Elite - S01E05 - [Tam + Tel + .mkv
+[25-Jun-26 04:46:07 PM] [INFO] - Applied Hyper DC media port 5222
+[25-Jun-26 04:46:07 PM] [INFO] - HypertgTransfer init clients=1 loads={1: 0}
+[25-Jun-26 04:46:13 PM] [ERROR] - HypertgDL ref fail: Failed to get file ref with Testingx22_Bot: No downloadable media
+[25-Jun-26 04:46:13 PM] [WARNING] - Hyper Telegram download failed; using fallback.
+[25-Jun-26 04:46:34 PM] [INFO] - Cancelling download on user request: name: @AniMe_YoGi  Classroom of the Elite - S01E05 - [Tam + Tel + .mkv id: AgADfR8AAgPn0FE
+[25-Jun-26 04:46:38 PM] [INFO] - Cleaning Download: /home/ironman2711/Desktop/leach-bot/downloads/828
+[25-Jun-26 04:55:04 PM] [INFO] - Running Pre Task Checks ...
+[25-Jun-26 04:55:04 PM] [INFO] - Download from Telegram: @AniMe_YoGi That Time I Got Reincarnated as a Slime S04EP07 .mkv
+[25-Jun-26 04:55:04 PM] [INFO] - HypertgTransfer init clients=1 loads={1: 1}
+[25-Jun-26 04:55:09 PM] [ERROR] - HypertgDL ref fail: Failed to get file ref with Testingx22_Bot: No downloadable media
+[25-Jun-26 04:55:09 PM] [WARNING] - Hyper Telegram download failed; using fallback.
+[25-Jun-26 04:55:41 PM] [INFO] - Cancelling download on user request: name: @AniMe_YoGi That Time I Got Reincarnated as a Slime S04EP07 .mkv id: AgADFR0AAq2XoFE
+[25-Jun-26 04:55:44 PM] [INFO] - Cleaning Download: /home/ironman2711/Desktop/leach-bot/downloads/172170

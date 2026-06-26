@@ -126,21 +126,8 @@ class HypertgUpload(HypertgTransfer):
                 f"is_bot={_is_bot} client={ul_ci}"
             )
 
-            tm = await client.storage.test_mode()
-            ak, is_cross = await self.create_auth(client, dc_id, tm)
-            ea = None
-            if is_cross:
-                ea = await client.invoke(
-                    raw.functions.auth.ExportAuthorization(dc_id=dc_id)
-                )
-
             async def _worker(wid):
-                s = Session(up_client, dc_id, ak, tm, is_media=True)
-                await self.start_session(s, mode=3)
-                if ea is not None:
-                    await s.invoke(
-                        raw.functions.auth.ImportAuthorization(id=ea.id, bytes=ea.bytes)
-                    )
+                s = await self._acquire_session(up_client, dc_id, is_media=True)
                 try:
                     while True:
                         try:
@@ -164,14 +151,9 @@ class HypertgUpload(HypertgTransfer):
                                     await s.stop()
                                 except Exception:
                                     pass
-                                s = Session(up_client, dc_id, ak, tm, is_media=True)
-                                await self.start_session(s, mode=3)
-                                if ea is not None:
-                                    await s.invoke(
-                                        raw.functions.auth.ImportAuthorization(
-                                            id=ea.id, bytes=ea.bytes
-                                        )
-                                    )
+                                s = await self._acquire_session(
+                                    up_client, dc_id, is_media=True
+                                )
                                 await sleep(1)
                             except Exception:
                                 if attempt == 4:
@@ -274,14 +256,11 @@ class HypertgUpload(HypertgTransfer):
         file_total_parts = ceil(file_size / PART_SIZE)
         file_id = client.rnd_id()
         dc_id = await client.storage.dc_id()
-        ak = await client.storage.auth_key()
-        tm = await client.storage.test_mode()
-        s = Session(client, dc_id, ak, tm, is_media=False)
+        s = await self._acquire_session(client, dc_id, is_media=False)
         fp = open(file_path, "rb")
         h = md5()
 
         try:
-            await s.start()
             for part in range(file_total_parts):
                 if self._listener.is_cancelled:
                     raise StopTransmission()

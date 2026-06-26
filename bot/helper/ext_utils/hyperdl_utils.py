@@ -279,10 +279,7 @@ class HypertgDownload(HypertgTransfer):
         s = self._cdn_sessions.get(key)
         if s and s.is_connected:
             return s
-        tm = await client.storage.test_mode()
-        ak = await Auth(client, cdn_dc, tm).create()
-        s = Session(client, cdn_dc, ak, tm, is_media=True, is_cdn=True)
-        await s.start()
+        s = await self._acquire_session(client, cdn_dc, is_media=True, is_cdn=True)
         self._cdn_sessions[key] = s
         return s
 

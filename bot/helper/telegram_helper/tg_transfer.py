@@ -149,14 +149,58 @@ class HypertgTransfer:
 
     @staticmethod
     async def create_auth(client, dc_id, tm=None):
+        """Resolve an auth_key for ``dc_id`` (current DC or via Auth() for cross-DC).
+
+        Kept for API compat with callers that want the raw auth_key. New code
+        should prefer ``_acquire_session`` which uses ``client.get_session`` and
+        handles everything end-to-end on both PyroTgFork and Kurigram.
+        """
         if tm is None:
             tm = await client.storage.test_mode()
         main_dc = await client.storage.dc_id()
         if dc_id != main_dc:
-            ak = await Auth(client, dc_id, tm).create()
+            # Kurigram's Auth.__init__ adds (server_address, port); PyroTgFork doesn't.
+            if hasattr(client, "get_dc_option"):
+                dc_option = await client.get_dc_option(
+                    dc_id, is_media=False, ipv6=client.ipv6
+                )
+                ak = await Auth(
+                    client, dc_id, dc_option.ip_address, dc_option.port, tm
+                ).create()
+            else:
+                ak = await Auth(client, dc_id, tm).create()
             return ak, True
         ak = await client.storage.auth_key()
         return ak, False
+
+    @staticmethod
+    async def _acquire_session(client, dc_id, *, is_media=True, is_cdn=False):
+        """Cross-library Session factory.
+
+        - **Kurigram** (preferred): uses ``client.get_session(temporary=True)``
+          which transparently resolves DC server_address/port, creates the
+          auth_key, starts the connection, and runs the cross-DC
+          ImportAuthorization handshake. Returns a fully-started Session.
+        - **PyroTgFork** (fallback): constructs ``Session(...)`` directly with
+          the old 5-arg signature, then starts it via ``start_session``.
+        """
+        if hasattr(client, "get_session"):
+            return await client.get_session(
+                dc_id=dc_id,
+                is_media=is_media,
+                is_cdn=is_cdn,
+                temporary=True,
+            )
+        # PyroTgFork fallback
+        tm = await client.storage.test_mode()
+        main_dc = await client.storage.dc_id()
+        if dc_id != main_dc:
+            ak = await Auth(client, dc_id, tm).create()
+        else:
+            ak = await client.storage.auth_key()
+        s = Session(client, dc_id, ak, tm, is_media=is_media)
+        await HypertgTransfer.start_session(s, mode=3)
+        return s
 
     @staticmethod
     async def start_session(s, mode=3):
@@ -213,11 +257,20 @@ class HypertgTransfer:
         return self._session_locks[key]
 
     async def _mk_session(self, client, dc_id, mode=3):
-        tm = await client.storage.test_mode()
-        ak, is_cross = await self.create_auth(client, dc_id, tm)
-        s = Session(client, dc_id, ak, tm, is_media=True)
-        await self.start_session(s, mode=mode)
-        if is_cross:
+        # Kurigram's get_session() handles auth + ImportAuthorization + start in one
+        # call, so the old ExportAuthorization dance below is redundant on Kurigram
+        # but still required for the PyroTgFork fallback path inside _acquire_session.
+        s = await self._acquire_session(client, dc_id, is_media=True)
+        # Older fallback path returns a Session that may need cross-DC import.
+        # On Kurigram, get_session(temporary=True, export_authorization=True default)
+        # already did this — calling ExportAuthorization again is harmless idempotent.
+        try:
+            main_dc = await client.storage.dc_id()
+            is_cross = dc_id != main_dc
+        except Exception:
+            is_cross = False
+        if is_cross and not hasattr(client, "get_session"):
+            # PyroTgFork path — manual ExportAuthorization
             for attempt in range(6):
                 try:
                     e = await client.invoke(

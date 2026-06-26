@@ -104,6 +104,10 @@ async def main():
     )
     await update_variables()
 
+    from .helper.ext_utils.helper_admin import ensure_helper_bots_admin
+
+    bot_loop.create_task(ensure_helper_bots_admin())
+
     from .core.jdownloader_booter import jdownloader
     from .helper.ext_utils.bot_utils import search_images
     from .helper.ext_utils.files_utils import clean_all

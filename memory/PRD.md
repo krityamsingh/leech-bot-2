@@ -40,8 +40,23 @@ Additionally, the Hyper TG downloader used the wrong `dump_chat` after copy-to-d
 - `python -m ast` / static lint: `bot/` parses clean on all Python versions, no lint errors.
 - Hyper TG fallback path no longer raises misleading "No downloadable media" when copy-to-dump fails.
 
-## Backlog / Next actions
-- P1: User must add each `HELPER_TOKENS` bot **as admin** to `LEECH_DUMP_CHAT` (`-1003864293232`) to unlock full multi-client Hyper TG speed. Without admin access helper bots can't fetch refs from the dump chat and the bot silently runs on fewer parallel clients.
+## Latest update (helper-admin auto-promotion)
+
+`bot/helper/ext_utils/helper_admin.py` (new) — at startup, iterate every
+`HELPER_TOKENS` bot, check its status in `LEECH_DUMP_CHAT`, and promote
+to admin if needed using the user session (preferred) or the main bot
+(must already be admin with `can_promote_members`). Wired into
+`bot/__main__.py` after `TgClient.start_*` and `update_variables()`.
+
+Behaviour:
+- Already admin → log and skip
+- Not in chat → log warning "add the bot to the chat first" (Telegram
+  forbids promoting a user that isn't a member)
+- Promote succeeds → log success
+- Promote forbidden (promoter lacks rights) → log warning
+
+No web/UI work was done — per user request "skip web".
+
 - P1: `gunicorn ... Connection in use: 0.0.0.0:8080` repeated on restart — kill stale gunicorn before `python -m bot` (the existing `run_bot.sh` does `pkill -9 -f "python -m bot"` but doesn't kill gunicorn children that bound 8080). Recommend `fuser -k 8080/tcp || true` before exec.
 - P2: Optional — add `tgcrypto-pyrofork` (drop-in C extension) as a secondary crypto provider for slightly faster AES-IGE if benchmarks show pytgcrypto is the bottleneck.
 - P2: Consider raising `HYPER_THREADS` from 12 to `num_clients * 4` once all helper bots are admins in the dump chat.

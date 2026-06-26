@@ -33,3 +33,5 @@
 [25-Jun-26 04:55:09 PM] [WARNING] - Hyper Telegram download failed; using fallback.
 [25-Jun-26 04:55:41 PM] [INFO] - Cancelling download on user request: name: @AniMe_YoGi That Time I Got Reincarnated as a Slime S04EP07 .mkv id: AgADFR0AAq2XoFE
 [25-Jun-26 04:55:44 PM] [INFO] - Cleaning Download: /home/ironman2711/Desktop/leach-bot/downloads/172170
+[25-Jun-26 09:19:24 PM] [INFO] - Web server is disabled by request. Only starting the bot.
+[25-Jun-26 09:19:25 PM] [INFO] - Aria2 initialized successfully.

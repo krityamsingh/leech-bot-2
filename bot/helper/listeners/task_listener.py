@@ -78,6 +78,14 @@ class TaskListener(TaskConfig):
             intervals["status"].clear()
             await gather(TorrentManager.aria2.purgeDownloadResult(), delete_status())
 
+    def _is_temp_thumb(self):
+        if not self.thumb:
+            return False
+        try:
+            return ospath.abspath(self.thumb).startswith(ospath.abspath(DOWNLOAD_DIR))
+        except Exception:
+            return False
+
     def clear(self):
         self.subname = ""
         self.subsize = 0
@@ -664,7 +672,7 @@ class TaskListener(TaskConfig):
         await clean_download(self.dir)
         if self.up_dir:
             await clean_download(self.up_dir)
-        if self.thumb and await aiopath.exists(self.thumb):
+        if self._is_temp_thumb() and await aiopath.exists(self.thumb):
             await remove(self.thumb)
 
     async def on_upload_error(self, error):
@@ -703,5 +711,5 @@ class TaskListener(TaskConfig):
         await clean_download(self.dir)
         if self.up_dir:
             await clean_download(self.up_dir)
-        if self.thumb and await aiopath.exists(self.thumb):
+        if self._is_temp_thumb() and await aiopath.exists(self.thumb):
             await remove(self.thumb)

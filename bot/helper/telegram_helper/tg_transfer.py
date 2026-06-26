@@ -11,7 +11,7 @@ from pyrogram.errors import AuthBytesInvalid, AuthKeyDuplicated, RPCError
 from pyrogram.file_id import FileType, ThumbnailSource
 from pyrogram.raw.all import layer
 from pyrogram.session import Auth, Session
-from pyrogram.session.internals import DataCenter
+from pyrogram.session.internals.data_center import DataCenter
 
 from ... import LOGGER
 from ...core.tg_client import TgClient

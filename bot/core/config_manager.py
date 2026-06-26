@@ -97,6 +97,8 @@ class Config:
     HYPER_THREADS = 0
     HYPER_PIPELINE = 64
     HYPER_CHUNK = 1024 * 1024
+    USE_PHP_TRANSPORT = False
+    PHP_BRIDGE_URL = "http://127.0.0.1:9090"
     CPU_LIMIT = 20
     THROTTLE_SERVICES = "auto"
     HYDRA_IP = ""

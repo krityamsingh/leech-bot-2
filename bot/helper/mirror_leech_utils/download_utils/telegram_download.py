@@ -127,8 +127,42 @@ class TelegramDownloadHelper:
                     file_name=path, progress=self._on_download_progress
                 )
 
+            async def _php_download():
+                """Optional PHP/MadelineProto download path.
+
+                Returns the saved file path on success, None otherwise so the
+                caller falls through to HyperDL → standard download.
+                """
+                if not getattr(Config, "USE_PHP_TRANSPORT", False):
+                    return None
+                from ....helper.ext_utils.php_bridge import php_bridge
+                try:
+                    result = await php_bridge.download(
+                        peer=message.chat.id,
+                        message_id=message.id,
+                        save_path=path,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    LOGGER.warning(f"php_bridge: download exception: {e}")
+                    return None
+                if not result or not result.get("ok"):
+                    return None
+                # Credit progress so the status bar finalises correctly.
+                try:
+                    self._processed_bytes = int(result.get("size") or 0)
+                except Exception:
+                    pass
+                LOGGER.info(
+                    f"php_bridge: downloaded via MadelineProto save_path={path}"
+                )
+                return result.get("save_path", path)
+
             # TODO : Add support for user session ( Huh ??)
-            if self._hyper_dl:
+            # ── PHP/MadelineProto path (optional, opt-in via config) ──────
+            download = await _php_download()
+            if download is not None:
+                pass  # PHP path succeeded
+            elif self._hyper_dl:
                 try:
                     self._hyper_dl_instance = HypertgDownload(self)
                     download = await self._hyper_dl_instance.download_media(

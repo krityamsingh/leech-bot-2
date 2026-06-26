@@ -1,0 +1,5 @@
+vendor/
+data/
+*.madeline
+*.lock
+*.log

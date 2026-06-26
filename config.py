@@ -34,6 +34,22 @@ HYPER_THREADS = 64              # 0 = auto. 64 = explicitly max parallel workers
 HYPER_PIPELINE = 64             # in-flight requests per client (MTProto window)
 HYPER_CHUNK = 1024 * 1024       # 1 MB = standard MTProto media chunk
 
+# ── PHP / MadelineProto BRIDGE (optional) ────────────────────────────────────
+# When True, the bot delegates EACH leech upload/download to the PHP
+# MadelineProto microservice running at PHP_BRIDGE_URL (default
+# http://127.0.0.1:9090). On any failure (service down, error response,
+# 3 consecutive timeouts → circuit breaker) the bot transparently falls
+# back to Kurigram HyperUP/HyperDL — your leech never breaks.
+#
+# To enable end-to-end:
+#   1. Flip this flag to True
+#   2. Add a Railway Persistent Volume mounted at /usr/src/app/php-bridge/data
+#      (otherwise session is wiped on every redeploy)
+#   3. SSH into the Railway container: `cd /usr/src/app/php-bridge && php login.php`
+#   4. Restart the service
+USE_PHP_TRANSPORT = False
+PHP_BRIDGE_URL = "http://127.0.0.1:9090"
+
 # ── TRANSMISSION + LEECH ─────────────────────────────────────────────────────
 TRANSMISSION_MODE = "both"      # "user" | "bot" | "both" (hybrid)
 LEECH_DUMP_CHAT = "-1003864293232"

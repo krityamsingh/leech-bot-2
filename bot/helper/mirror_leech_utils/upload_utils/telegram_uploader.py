@@ -617,6 +617,59 @@ class TelegramUploader:
             reply_to_message_id=self._sent_msg.id,
         )
 
+    async def _try_php_upload(self, o_path, cap_mono, thumb):
+        """Optional: delegate this single upload to the PHP MadelineProto bridge.
+
+        Returns a Pyrogram Message on success (re-fetched after PHP submits via
+        the same user session), or None on any failure / when disabled. The
+        caller then proceeds with normal Kurigram HyperUP path on None.
+        """
+        from ...ext_utils.php_bridge import php_bridge  # local import
+
+        if not getattr(Config, "USE_PHP_TRANSPORT", False):
+            return None
+        if self._sent_msg is None or self._sent_msg.chat is None:
+            return None
+        peer = self._sent_msg.chat.id
+        try:
+            is_video, _is_audio, _is_image = await get_document_type(o_path)
+        except Exception:
+            is_video = False
+        as_video = bool(is_video) and not self._listener.as_doc
+
+        result = await php_bridge.upload(
+            file_path=o_path,
+            peer=peer,
+            caption=cap_mono or "",
+            as_video=as_video,
+            thumb=thumb if thumb and thumb != "none" else None,
+        )
+        if not result or not result.get("ok") or not result.get("message_id"):
+            return None
+        msg_id = result["message_id"]
+        try:
+            # Use the user session to fetch (PHP uploaded via user account).
+            fetcher = TgClient.user or self._listener.client
+            sent = await fetcher.get_messages(chat_id=peer, message_ids=msg_id)
+            if sent is None:
+                return None
+            self._sent_msg = sent
+            # Optimistic progress accounting — PHP bridge has no streaming
+            # progress callback, so we just credit the whole file at end.
+            try:
+                from os import path as _osp
+                self._processed_bytes += _osp.getsize(o_path)
+            except Exception:
+                pass
+            LOGGER.info(
+                f"php_bridge: uploaded via MadelineProto "
+                f"file={ospath.basename(o_path)} peer={peer} msg_id={msg_id}"
+            )
+            return sent
+        except Exception as e:  # noqa: BLE001
+            LOGGER.warning(f"php_bridge: post-upload fetch failed: {e}")
+            return None
+
     async def _upload_file(self, cap_mono, file, o_path, force_document=False):
         if self._sent_msg is None:
             LOGGER.error("Cannot upload: _sent_msg is None")
@@ -640,6 +693,20 @@ class TelegramUploader:
             self._thumb = None
         thumb = self._thumb
         self._is_corrupted = False
+        # ── Optional PHP/MadelineProto delegation ────────────────────────────
+        # If USE_PHP_TRANSPORT=True and the bridge is reachable, hand the file
+        # to the PHP service. On any failure we fall through to the regular
+        # Kurigram HyperUP path so the leech never breaks.
+        php_sent = await self._try_php_upload(o_path, cap_mono, thumb)
+        if php_sent is not None:
+            if (
+                self._thumb is None
+                and thumb is not None
+                and await aiopath.exists(thumb)
+                and thumb != "none"
+            ):
+                await remove(thumb)
+            return php_sent
         try:
             is_video, is_audio, is_image = await get_document_type(o_path)
 

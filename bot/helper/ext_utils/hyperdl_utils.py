@@ -32,7 +32,10 @@ from pyrogram.errors import (
 )
 from pyrogram.file_id import PHOTO_TYPES, FileId, FileType
 from pyrogram.session import Auth, Session
-from pyrogram.session.internals import MsgId
+try:
+    from pyrogram.session.internals import MsgId
+except ImportError:
+    from pyrogram.session.internals.msg_id import MsgId
 
 from ... import LOGGER
 from ...core.config_manager import Config

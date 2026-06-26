@@ -11,7 +11,16 @@ from pyrogram.errors import AuthBytesInvalid, AuthKeyDuplicated, RPCError
 from pyrogram.file_id import FileType, ThumbnailSource
 from pyrogram.raw.all import layer
 from pyrogram.session import Auth, Session
-from pyrogram.session.internals.data_center import DataCenter
+try:
+    from pyrogram.session.internals.data_center import DataCenter
+except ImportError:
+    try:
+        from pyrogram.session.internals import DataCenter  # noqa: F401
+    except ImportError:
+        try:
+            from pyrogram.session.session import DataCenter  # noqa: F401
+        except ImportError:
+            DataCenter = None  # patch will be skipped at runtime
 
 from ... import LOGGER
 from ...core.tg_client import TgClient
@@ -44,7 +53,7 @@ async def _tcp_tuned_connect(self, address):
             LOGGER.info(f"HypertgTCP socket tune failed: {e}")
 
 
-_orig_dc_new = DataCenter.__new__
+_orig_dc_new = DataCenter.__new__ if DataCenter is not None else None
 
 
 def _dc_alt_port(cls, dc_id, test_mode, ipv6, media):
@@ -61,6 +70,13 @@ _hyper_patches_applied = False
 def _apply_hyper_patches():
     global _hyper_patches_applied
     if _hyper_patches_applied:
+        return
+    if DataCenter is None:
+        LOGGER.warning(
+            "Hyper DC port patch skipped: DataCenter not exported by this "
+            "pyrogram build (using default media port)."
+        )
+        _hyper_patches_applied = True
         return
     try:
         DataCenter.__new__ = staticmethod(_dc_alt_port)

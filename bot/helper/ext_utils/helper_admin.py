@@ -117,46 +117,61 @@ async def _aiter_promoters():
 
 
 async def ensure_helper_bots_admin():
-    """Promote every helper bot to admin in LEECH_DUMP_CHAT (best-effort)."""
+    """Promote every helper bot AND helper user-session to admin in LEECH_DUMP_CHAT.
+
+    Without this:
+    - helper bots can't fetch file refs (HyperTG download falls back)
+    - helper user sessions silently downgrade transmission to bot mode
+      (because `can_manage_chat`/`can_delete_messages` checks fail) →
+      uploads stay single-stream at 1 MB/s no matter how many you add.
+    """
     raw_chat = getattr(Config, "LEECH_DUMP_CHAT", None)
     chat_id = _normalize_chat_id(raw_chat)
-    helpers = TgClient.helper_bots
-    if not chat_id or not helpers:
+    bots = TgClient.helper_bots or {}
+    users = TgClient.helper_users or {}
+    if not chat_id or (not bots and not users):
         return
 
     LOGGER.info(
-        f"helper_admin: ensuring {len(helpers)} helper bot(s) are admin in {chat_id}"
-    )
-    results = await gather(
-        *(_ensure_one(chat_id, idx, hbot) for idx, hbot in helpers.items()),
-        return_exceptions=True,
+        f"helper_admin: ensuring {len(bots)} helper bot(s) + {len(users)} "
+        f"helper user(s) are admin in {chat_id}"
     )
 
+    tasks = []
+    labels = []
+    for idx, hbot in bots.items():
+        tasks.append(_ensure_one(chat_id, f"bot-{idx}", hbot))
+        labels.append(("helper-bot", idx))
+    for idx, huser in users.items():
+        tasks.append(_ensure_one(chat_id, f"user-{idx}", huser))
+        labels.append(("helper-user", idx))
+
+    results = await gather(*tasks, return_exceptions=True)
+
     promoted = already = failed = 0
-    for r in results:
+    for (kind, idx), r in zip(labels, results):
         if isinstance(r, BaseException):
             failed += 1
-            LOGGER.warning(f"helper_admin: unexpected error: {r}")
+            LOGGER.warning(f"helper_admin: {kind}-{idx} unexpected error: {r}")
             continue
         _idx, status, info = r
+        tag = f"{kind} @{info}" if info else f"{kind}-{idx}"
         if status == "already-admin":
             already += 1
-            LOGGER.info(f"helper_admin: @{info} already admin in {chat_id}")
+            LOGGER.info(f"helper_admin: {tag} already admin in {chat_id}")
         elif status.startswith("promoted-via-"):
             promoted += 1
             via = status.split("-", 2)[-1]
-            LOGGER.info(
-                f"helper_admin: promoted @{info} to admin in {chat_id} via {via}"
-            )
+            LOGGER.info(f"helper_admin: promoted {tag} via {via}")
         elif status == "not-in-chat":
             failed += 1
             LOGGER.warning(
-                f"helper_admin: @{info} is NOT a member of {chat_id} — "
-                "add the bot to the chat first, then it will be auto-promoted"
+                f"helper_admin: {tag} is NOT in chat {chat_id} — invite "
+                "this account to the chat once, then it auto-promotes on next restart"
             )
         else:
             failed += 1
-            LOGGER.warning(f"helper_admin: could not promote {info}")
+            LOGGER.warning(f"helper_admin: could not promote {tag}")
 
     LOGGER.info(
         f"helper_admin: done — already_admin={already} promoted={promoted} "

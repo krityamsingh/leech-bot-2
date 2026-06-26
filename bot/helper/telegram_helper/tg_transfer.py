@@ -30,6 +30,30 @@ pyrogram.crypto_executor = ThreadPoolExecutor(
     max_workers=_crypto_workers, thread_name_prefix="crypto"
 )
 
+# Verify a native crypto extension is actually loaded (otherwise Pyrogram
+# falls back to pure-python `pyaes` which is ~50x slower and will silently
+# bottleneck every upload/download at ~2 MB/s regardless of config tuning).
+try:
+    import tgcrypto as _tgc
+
+    _crypto_impl = "tgcrypto"
+    _crypto_path = getattr(_tgc, "__file__", "?")
+    if hasattr(_tgc, "ige256_encrypt"):
+        LOGGER.info(
+            f"Native crypto OK: {_crypto_impl} loaded from {_crypto_path} "
+            f"(workers={_crypto_workers})"
+        )
+    else:
+        LOGGER.warning(
+            f"Native crypto loaded but ige256_encrypt missing in {_crypto_impl}"
+        )
+except ImportError:
+    LOGGER.error(
+        "Native crypto MISSING: tgcrypto / TgrCrypto not importable -- "
+        "Pyrogram will fall back to pure-python pyaes (50x slower!). "
+        "Install: pip install TgrCrypto"
+    )
+
 _orig_tcp_connect = TCP.connect
 
 

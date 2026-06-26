@@ -909,9 +909,11 @@ class HypertgDownload(HypertgTransfer):
                     dump_chat = int(dump_chat)
                 except (ValueError, TypeError):
                     dump_chat = None
+            copy_ok = False
             if dump_chat:
                 if getattr(getattr(message, "chat", None), "id", None) == dump_chat:
                     self.message = message
+                    copy_ok = True
                 else:
                     last_err = None
                     for copy_client in self._copy_clients():
@@ -923,6 +925,7 @@ class HypertgDownload(HypertgTransfer):
                                 disable_notification=True,
                             )
                             self._media_of(self.message)
+                            copy_ok = True
                             break
                         except Exception as e:
                             last_err = e
@@ -934,13 +937,17 @@ class HypertgDownload(HypertgTransfer):
                                 f"{cname or 'client'}: {e} "
                                 f"(from={message.chat.id} to={dump_chat})"
                             )
-                    else:
+                    if not copy_ok:
                         LOGGER.warning(
                             "HypertgDL using source message without dump copy: "
                             f"{last_err}"
                         )
                         self.message = message
-            self.dump_chat = dump_chat or message.chat.id
+            # If copy to dump_chat failed, fall back to source chat so that
+            # ref-fetch on helper clients uses a chat/id that matches the
+            # actual message (helpers will then fail with access errors and
+            # gracefully fall back to source FileId).
+            self.dump_chat = dump_chat if copy_ok else message.chat.id
             self.message = self.message or message
             media = self._media_of(self.message)
             fid_str = media if isinstance(media, str) else media.file_id

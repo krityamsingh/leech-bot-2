@@ -400,6 +400,7 @@ def get_bot_commands():
         "MediaInfo": "[reply/link] Get MediaInfo of the Target Media",
         "Select": "[gid/reply] Select files for NZB, Aria2, Qbit Tasks",
         "Ping": "Ping Bot to test Response Speed",
+        "SpeedTest": "[SUDO] Per-client Telegram throughput diagnostic",
         "Status": "[id/me] Tasks Status of Bot",
         "Stats": "Bot, OS, Repo & System full Statistics",
         "Rss": "User RSS Management Settings",

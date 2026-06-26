@@ -310,6 +310,13 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            speedtest,
+            filters=command(BotCommands.SpeedTestCommand, case_sensitive=True)
+            & CustomFilters.sudo,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             bot_help,
             filters=command(BotCommands.HelpCommand, case_sensitive=True)
             & CustomFilters.authorized,
@@ -474,14 +481,30 @@ def add_handlers():
                 BOT_COMMANDS, "Login", "[password] Login to Bot", 14
             )
 
-        TgClient.bot.set_bot_commands(
-            [
-                BotCommand(
-                    cmds[0] if isinstance(cmds, list) else cmds,
-                    description,
+        from ..helper.ext_utils.bot_utils import safe_create_task
+
+        async def _push_bot_commands():
+            try:
+                await TgClient.bot.set_bot_commands(
+                    [
+                        BotCommand(
+                            cmds[0] if isinstance(cmds, list) else cmds,
+                            description,
+                        )
+                        for cmd, description in BOT_COMMANDS.items()
+                        for cmds in [getattr(BotCommands, f"{cmd}Command", None)]
+                        if cmds is not None
+                    ]
                 )
-                for cmd, description in BOT_COMMANDS.items()
-                for cmds in [getattr(BotCommands, f"{cmd}Command", None)]
-                if cmds is not None
-            ]
-        )
+                from .. import LOGGER  # noqa: PLC0415
+
+                LOGGER.info(
+                    f"Registered {len(BOT_COMMANDS)} bot commands with Telegram "
+                    f"(suffix='{Config.CMD_SUFFIX}')"
+                )
+            except Exception as e:  # noqa: BLE001
+                from .. import LOGGER  # noqa: PLC0415
+
+                LOGGER.warning(f"set_bot_commands failed: {e}")
+
+        safe_create_task(_push_bot_commands())

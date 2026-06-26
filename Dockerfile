@@ -3,10 +3,12 @@ FROM mysterysd/wzmlx:v3
 WORKDIR /usr/src/app
 
 # ── Required credentials ───────────────────────────────────────────────────────
-ENV BOT_TOKEN=8774145303:AAESuoxl9COf15MaIOi7pBvUBGeW6Jg6Dvk \
-    TELEGRAM_API=26676741 \
+# NOTE: BOT_TOKEN intentionally NOT set here — Railway provides it per-deployment.
+# Everything else lives in this Dockerfile so Railway only needs BOT_TOKEN.
+ENV TELEGRAM_API=26676741 \
     TELEGRAM_HASH=6fbc29f23c15bdb0c7fbbefe65c9193a \
     OWNER_ID=6118760915 \
+    CMD_SUFFIX=3 \
     USER_SESSION_STRING=BQGXDgUAjADJk0-Tki-dkPdlU3J90KUGoDSiTX71r_C7zfUMY0CeQDZn29u7rQML-ZA1QGm1ZUIAKryKvcMxaijXJMmHya4W2K0hw3glXFzwsx_DUgFeOJxgBg39op8luPxhVuBlPbYd1929tMKn7pZO8HaNWx2ka4m75lFJDUDEITSguiWqm8Yc6Kn_hSnTJAQOhottfPND8mCRUtD-1_piKoajzBjKbKl2epA0LE-gwS83tzehhCO1_ybi1fEh9gGc8w_THUlNu5fPNdrzyO1dugV6Q2x67Z4B-1hIYDoG6WUu9kbLlpZu1Ue4RN9xjWjvUxmuTmEsaHjUgXP6vLgeNSVnCAAAAAGGIOrzAA
 
 # ── Helper clients ─────────────────────────────────────────────────────────────
@@ -17,11 +19,12 @@ ENV HELPER_TOKENS=8694415781:AAGMjpQQf8RbmRgd8sbTccok4dSdXje6CYA
 # ENV HELPER_STRINGS=BQG...session2... BQG...session3...
 
 # ── HyperTG speed settings ─────────────────────────────────────────────────────
-# HYPER_THREADS = num_clients x 4  (currently 3 clients -> 12)
-# When you add more clients, scale: 4 clients=16, 6 clients=24, 10 clients=40
+# HYPER_THREADS=0 = auto-tune to CPU cores
+# HYPER_PIPELINE=64 (in-flight requests per client). 128/256 can OOM on small RAM.
+# HYPER_CHUNK=1MB = MTProto standard media chunk.
 ENV USE_HYPER=true \
-    HYPER_THREADS=12 \
-    HYPER_PIPELINE=256 \
+    HYPER_THREADS=0 \
+    HYPER_PIPELINE=64 \
     HYPER_CHUNK=1048576
 
 # ── Upload/transmission settings ───────────────────────────────────────────────

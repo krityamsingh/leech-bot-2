@@ -1,15 +1,17 @@
 # ── REQUIRED CONFIG ───────────────────────────────────────────────────────────
-BOT_TOKEN = "8774145303:AAESuoxl9COf15MaIOi7pBvUBGeW6Jg6Dvk"
+# BOT_TOKEN intentionally left empty — set it as a Railway env var per deployment
+# (Giyu uses one token, Zoro uses another, etc.). Everything else lives here.
+BOT_TOKEN = ""
 OWNER_ID = 6118760915
 TELEGRAM_API = 26676741
 TELEGRAM_HASH = "6fbc29f23c15bdb0c7fbbefe65c9193a"
 DATABASE_URL = ""
-DOWNLOAD_DIR = "/home/ironman2711/Desktop/leach-bot/downloads/"
+DOWNLOAD_DIR = "/usr/src/app/downloads/"
 
 # ── OPTIONAL CONFIG ───────────────────────────────────────────────────────────
 DEFAULT_LANG = "en"
 USER_SESSION_STRING = "BQGXDgUAjADJk0-Tki-dkPdlU3J90KUGoDSiTX71r_C7zfUMY0CeQDZn29u7rQML-ZA1QGm1ZUIAKryKvcMxaijXJMmHya4W2K0hw3glXFzwsx_DUgFeOJxgBg39op8luPxhVuBlPbYd1929tMKn7pZO8HaNWx2ka4m75lFJDUDEITSguiWqm8Yc6Kn_hSnTJAQOhottfPND8mCRUtD-1_piKoajzBjKbKl2epA0LE-gwS83tzehhCO1_ybi1fEh9gGc8w_THUlNu5fPNdrzyO1dugV6Q2x67Z4B-1hIYDoG6WUu9kbLlpZu1Ue4RN9xjWjvUxmuTmEsaHjUgXP6vLgeNSVnCAAAAAGGIOrzAA"
-CMD_SUFFIX = "1"
+CMD_SUFFIX = "3"
 AUTHORIZED_CHATS = ""
 SUDO_USERS = ""
 STATUS_LIMIT = 10
@@ -24,10 +26,13 @@ WEB_ACCESS_PASSWORD = ""
 
 # ── Hyper Telegram Downloader / Uploader ─────────────────────────────────────
 HELPER_TOKENS = "8694415781:AAGMjpQQf8RbmRgd8sbTccok4dSdXje6CYA"          # Add extra bot tokens here for parallel TG uploads
-USE_HYPER = True            # Enable multi-threaded Telegram upload/download
-HYPER_THREADS = 64          # Number of parallel upload/download workers (Default: 64)
-HYPER_PIPELINE = 32          # Concurrent requests per worker (Default: 32)
-HYPER_CHUNK = 512 * 1024    # Working chunk size (Default: 512KB)
+HELPER_STRINGS = ""           # Add helper USER sessions here (space-separated) for real upload-speed gain
+USE_HYPER = True              # Enable multi-threaded Telegram upload/download
+HYPER_THREADS = 0             # 0 = auto-tune to CPU cores (recommended)
+HYPER_PIPELINE = 64           # In-flight requests per client (default = MTProto window size)
+HYPER_CHUNK = 1024 * 1024     # 1 MB = standard MTProto media chunk
+TRANSMISSION_MODE = "both"    # "user" / "bot" / "both" (hybrid). User-side is faster.
+LEECH_DUMP_CHAT = "-1003864293232"
 
 # ── Upload Destination ────────────────────────────────────────────────────────
 DEFAULT_UPLOAD = "gd"        # "gd" = Google Drive (all /mirror commands go to Drive)

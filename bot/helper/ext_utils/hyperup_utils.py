@@ -109,12 +109,22 @@ class HypertgUpload(HypertgTransfer):
                 _concurrent = 1
 
             _is_bot = bool(getattr(getattr(up_client, "me", None), "is_bot", True))
-            n_workers = Config.HYPER_THREADS or (16 if _is_bot else 32)
+            # MAX-UPLOAD tuning:
+            #   - user sessions: default 64 workers, cap 48 per single upload
+            #   - bot sessions:  default 32 workers, cap 24 per single upload
+            # (Telegram's per-session throttle still applies — these limits saturate
+            # an individual session faster but cannot exceed account-level caps.)
+            n_workers = Config.HYPER_THREADS or (32 if _is_bot else 64)
             n_workers = max(1, n_workers // _concurrent)
-            n_workers = min(n_workers, 24 if not _is_bot else 12)
+            n_workers = min(n_workers, 48 if not _is_bot else 24)
 
-            fp = open(file_path, "rb", buffering=4 * 1024 * 1024)
-            q = Queue(n_workers * 4)
+            fp = open(file_path, "rb", buffering=8 * 1024 * 1024)
+            q = Queue(n_workers * 8)  # was *4, deeper queue = less worker stalling
+            LOGGER.info(
+                f"HypertgUL upload start file={ospath.basename(file_path)} "
+                f"size={file_size} parts={file_total_parts} workers={n_workers} "
+                f"is_bot={_is_bot} client={ul_ci}"
+            )
 
             tm = await client.storage.test_mode()
             ak, is_cross = await self.create_auth(client, dc_id, tm)

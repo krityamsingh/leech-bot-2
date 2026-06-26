@@ -217,14 +217,10 @@ class Config:
                     except Exception:
                         continue
                 setattr(cls, attr, value)
-        # Validation is now done in load() after load_env() runs too
-        # (keeps backward compat if someone calls load_config() directly)
-        for key in ["BOT_TOKEN", "OWNER_ID", "TELEGRAM_API", "TELEGRAM_HASH"]:
-            value = getattr(cls, key)
-            if isinstance(value, str):
-                value = value.strip()
-            if not value:
-                raise ValueError(f"{key} variable is missing!")
+        # NOTE: validation moved to load() so it runs AFTER load_env() too.
+        # Previously this raised ValueError for empty BOT_TOKEN here, which
+        # broke the legitimate pattern of leaving BOT_TOKEN="" in config.py
+        # and letting the Railway env var fill it in.
 
 
     @classmethod

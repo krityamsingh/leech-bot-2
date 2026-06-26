@@ -10,6 +10,7 @@ from ..helper.ext_utils.bot_utils import (
     COMMAND_USAGE,
     arg_parser,
     cmd_exec,
+    safe_create_task,
     sync_to_async,
 )
 from ..helper.ext_utils.exceptions import DirectDownloadLinkException
@@ -363,4 +364,4 @@ class Clone(TaskListener):
 
 
 async def clone_node(client, message):
-    bot_loop.create_task(Clone(client, message).new_event())
+    safe_create_task(Clone(client, message).new_event())

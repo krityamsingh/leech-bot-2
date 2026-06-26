@@ -10,6 +10,7 @@ from ..helper.ext_utils.bot_utils import (
     COMMAND_USAGE,
     arg_parser,
     get_content_type,
+    safe_create_task,
     sync_to_async,
 )
 from ..helper.ext_utils.exceptions import DirectDownloadLinkException
@@ -446,18 +447,18 @@ class Mirror(TaskListener):
 
 
 async def mirror(client, message):
-    bot_loop.create_task(Mirror(client, message).new_event())
+    safe_create_task(Mirror(client, message).new_event())
 
 
 async def qb_mirror(client, message):
-    bot_loop.create_task(Mirror(client, message, is_qbit=True).new_event())
+    safe_create_task(Mirror(client, message, is_qbit=True).new_event())
 
 
 async def jd_mirror(client, message):
     if Config.DISABLE_JD:
         await message.reply("JDownloader is currently disabled by the Bot Owner.")
         return
-    bot_loop.create_task(Mirror(client, message, is_jd=True).new_event())
+    safe_create_task(Mirror(client, message, is_jd=True).new_event())
 
 
 async def nzb_mirror(client, message):
@@ -480,18 +481,18 @@ async def nzb_mirror(client, message):
     mirror_task = Mirror(client, message, is_nzb=True)
     if nzb_id:
         mirror_task.nzb_id = nzb_id
-    bot_loop.create_task(mirror_task.new_event())
+    safe_create_task(mirror_task.new_event())
 
 
 async def leech(client, message):
     if Config.DISABLE_LEECH:
         await message.reply("The Leech command is currently disabled.")
         return
-    bot_loop.create_task(Mirror(client, message, is_leech=True).new_event())
+    safe_create_task(Mirror(client, message, is_leech=True).new_event())
 
 
 async def qb_leech(client, message):
-    bot_loop.create_task(
+    safe_create_task(
         Mirror(client, message, is_qbit=True, is_leech=True).new_event()
     )
 
@@ -500,7 +501,7 @@ async def jd_leech(client, message):
     if Config.DISABLE_JD:
         await message.reply("JDownloader is currently disabled by the Bot Owner.")
         return
-    bot_loop.create_task(Mirror(client, message, is_leech=True, is_jd=True).new_event())
+    safe_create_task(Mirror(client, message, is_leech=True, is_jd=True).new_event())
 
 
 async def nzb_leech(client, message):
@@ -523,8 +524,8 @@ async def nzb_leech(client, message):
     mirror_task = Mirror(client, message, is_leech=True, is_nzb=True)
     if nzb_id:
         mirror_task.nzb_id = nzb_id
-    bot_loop.create_task(mirror_task.new_event())
+    safe_create_task(mirror_task.new_event())
 
 
 async def uphoster(client, message):
-    bot_loop.create_task(Mirror(client, message, is_uphoster=True).new_event())
+    safe_create_task(Mirror(client, message, is_uphoster=True).new_event())

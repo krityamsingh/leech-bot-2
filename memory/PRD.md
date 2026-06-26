@@ -40,7 +40,46 @@ Additionally, the Hyper TG downloader used the wrong `dump_chat` after copy-to-d
 - `python -m ast` / static lint: `bot/` parses clean on all Python versions, no lint errors.
 - Hyper TG fallback path no longer raises misleading "No downloadable media" when copy-to-dump fails.
 
-## Latest update (helper-admin auto-promotion)
+## Iteration 3 — Multi-task crash root cause + thumbnail shortcut + CMD_SUFFIX=3
+
+### Root cause of "bot crashes when 2 tasks given"
+In `bot/modules/mirror_leech.py`, `bot/modules/ytdlp.py`,
+`bot/modules/clone.py`, `bot/modules/gd_clean.py` the entry points did
+`bot_loop.create_task(Mirror(...).new_event())` and immediately discarded
+the returned task. Python's `asyncio` only keeps a *weak* reference to
+tasks (documented behaviour), so the GC could collect — and therefore
+cancel — the first in-flight leech as soon as the handler frame for the
+2nd `/leech` triggered an allocation cycle. This is the classic
+"task disappearing mid-execution" trap and matches the user's symptom
+(b/c/d: process appears to die / hang / first task stops).
+
+Same flaw existed inside the `new_task` decorator in
+`bot/helper/ext_utils/bot_utils.py` (used by every `@new_task` handler).
+
+### Fix
+- Added `safe_create_task(coro)` in `bot/helper/ext_utils/bot_utils.py`
+  that stores tasks in a module-level `set`, removes them on done, and
+  logs any unhandled exception (so a single-task failure no longer
+  silently disappears).
+- Rewired all leech/mirror/clone/gd-clean/ytdl/uphoster entry points to
+  use `safe_create_task` instead of bare `bot_loop.create_task`.
+- Rewrote `new_task` to delegate to `safe_create_task`.
+
+### CMD_SUFFIX
+- `config.env`: `CMD_SUFFIX = "3"` (Zoro bot). Restart the bot.
+
+### Thumbnail shortcut
+- `bot/modules/users_settings.py::send_user_settings` now accepts the
+  inline form `/us3 -s thumb` (also `-s thumbnail`, `set thumb`,
+  `set thumbnail`, `-thumb`) when used as a *reply* to a photo / image
+  document / static sticker. The image is saved as the user's persistent
+  leech thumbnail via the existing `create_thumb()` helper and persisted
+  to the database when `DATABASE_URL` is set.
+
+### Note
+- Web/port-8080 cleanup was skipped per user request.
+- Helper-bot auto-promote from iteration 2 still active.
+
 
 `bot/helper/ext_utils/helper_admin.py` (new) — at startup, iterate every
 `HELPER_TOKENS` bot, check its status in `LEECH_DUMP_CHAT`, and promote

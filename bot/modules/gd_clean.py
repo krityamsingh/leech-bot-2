@@ -2,7 +2,7 @@ from pyrogram.enums import ButtonStyle
 
 from .. import bot_cache, bot_loop, categories_dict, user_data
 from ..core.config_manager import Config
-from ..helper.ext_utils.bot_utils import arg_parser, fetch_drive_cat, new_task
+from ..helper.ext_utils.bot_utils import arg_parser, fetch_drive_cat, new_task, safe_create_task
 from ..helper.ext_utils.links_utils import is_gdrive_link
 from ..helper.listeners.task_listener import TaskListener
 from ..helper.mirror_leech_utils.gdrive_utils.clean import GoogleDriveClean
@@ -73,7 +73,7 @@ class GDClean(TaskListener):
 
 @new_task
 async def drive_clean(client, message):
-    bot_loop.create_task(GDClean(client, message).new_event())
+    safe_create_task(GDClean(client, message).new_event())
 
 
 @new_task

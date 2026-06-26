@@ -362,11 +362,42 @@ async def cmd_exec(cmd, shell=False):
     return stdout, stderr, proc.returncode
 
 
+_bg_tasks: set = set()
+
+
+def safe_create_task(coro, *, name=None):
+    """asyncio.create_task that keeps a strong reference until done.
+
+    Plain ``bot_loop.create_task(...)`` only gets a weak ref from the event
+    loop, so a busy garbage collector can cancel the task mid-flight — a
+    very common cause of "the bot dies as soon as I give it a 2nd task".
+    Always use this wrapper for fire-and-forget tasks.
+    """
+    task = bot_loop.create_task(coro, name=name) if name else bot_loop.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+    def _log_unhandled(t):
+        try:
+            exc = t.exception()
+        except Exception:
+            return
+        if exc is not None:
+            LOGGER.error(
+                f"safe_create_task: unhandled exception in {name or t.get_name()}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    task.add_done_callback(_log_unhandled)
+    return task
+
+
 def new_task(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        task = bot_loop.create_task(func(*args, **kwargs))
-        return task
+        return safe_create_task(
+            func(*args, **kwargs), name=getattr(func, "__name__", None)
+        )
 
     return wrapper
 

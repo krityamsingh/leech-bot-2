@@ -1091,6 +1091,46 @@ async def update_user_settings(query, stype="main"):
 async def send_user_settings(_, message):
     from_user = message.from_user
     handler_dict[from_user.id] = False
+
+    # Shortcut: `/us3 -s thumb` (reply to a photo / document image / sticker) sets
+    # the user's persistent thumbnail directly without opening the menu.
+    text = (message.text or message.caption or "").strip()
+    parts = text.split(maxsplit=1)
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    if arg in ("-s thumb", "-s thumbnail", "set thumb", "set thumbnail", "-thumb"):
+        reply = message.reply_to_message
+        photo_msg = None
+        if reply is not None:
+            if reply.photo:
+                photo_msg = reply
+            elif reply.document and (reply.document.mime_type or "").startswith("image/"):
+                photo_msg = reply
+            elif reply.sticker and not reply.sticker.is_animated and not reply.sticker.is_video:
+                photo_msg = reply
+        if photo_msg is None:
+            await send_message(
+                message,
+                "<b>Usage:</b> reply to a photo (or image document) with "
+                "<code>/{cmd} -s thumb</code> to set it as your leech thumbnail.".format(
+                    cmd=parts[0].lstrip("/").split("@", 1)[0]
+                ),
+            )
+            return
+        try:
+            saved = await create_thumb(photo_msg, from_user.id)
+        except Exception as e:
+            await send_message(message, f"<b>Thumbnail save failed:</b> {e}")
+            return
+        update_user_ldata(from_user.id, "THUMBNAIL", saved)
+        if Config.DATABASE_URL:
+            await database.update_user_doc(from_user.id, "THUMBNAIL", saved)
+        await send_message(
+            message,
+            "<b>✅ Thumbnail saved.</b> Use <code>/{cmd}</code> → Thumbnail → View "
+            "to verify.".format(cmd=parts[0].lstrip("/").split("@", 1)[0]),
+        )
+        return
+
     msg, button = await get_user_settings(from_user)
     await send_message(message, msg, button)
 

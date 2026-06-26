@@ -15,6 +15,7 @@ from ..helper.ext_utils.bot_utils import (
     COMMAND_USAGE,
     arg_parser,
     new_task,
+    safe_create_task,
     sync_to_async,
 )
 from ..helper.ext_utils.links_utils import is_url
@@ -526,11 +527,11 @@ async def ytdl(client, message):
     if Config.DISABLE_YTDLP:
         await message.reply("YT-DLP downloads are currently disabled by the Bot Owner.")
         return
-    bot_loop.create_task(YtDlp(client, message).new_event())
+    safe_create_task(YtDlp(client, message).new_event())
 
 
 async def ytdl_leech(client, message):
     if Config.DISABLE_YTDLP:
         await message.reply("YT-DLP downloads are currently disabled by the Bot Owner.")
         return
-    bot_loop.create_task(YtDlp(client, message, is_leech=True).new_event())
+    safe_create_task(YtDlp(client, message, is_leech=True).new_event())

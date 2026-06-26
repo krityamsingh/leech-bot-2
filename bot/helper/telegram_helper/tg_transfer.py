@@ -1,6 +1,6 @@
 from asyncio import Event, Lock, gather, sleep
 from concurrent.futures import ThreadPoolExecutor
-from os import cpu_count
+from os import cpu_count as _cpu_count
 
 import pyrogram
 import socket
@@ -16,8 +16,9 @@ from pyrogram.session.internals import DataCenter
 from ... import LOGGER
 from ...core.tg_client import TgClient
 
+_crypto_workers = max(64, (_cpu_count() or 4) * 8)
 pyrogram.crypto_executor = ThreadPoolExecutor(
-    max_workers=128, thread_name_prefix="crypto"
+    max_workers=_crypto_workers, thread_name_prefix="crypto"
 )
 
 _orig_tcp_connect = TCP.connect

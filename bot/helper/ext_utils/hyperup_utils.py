@@ -111,6 +111,7 @@ class HypertgUpload(HypertgTransfer):
             _is_bot = bool(getattr(getattr(up_client, "me", None), "is_bot", True))
             n_workers = Config.HYPER_THREADS or (16 if _is_bot else 32)
             n_workers = max(1, n_workers // _concurrent)
+            n_workers = min(n_workers, 24 if not _is_bot else 12)
 
             fp = open(file_path, "rb", buffering=4 * 1024 * 1024)
             q = Queue(n_workers * 4)
@@ -125,7 +126,7 @@ class HypertgUpload(HypertgTransfer):
 
             async def _worker(wid):
                 s = Session(up_client, dc_id, ak, tm, is_media=True)
-                await self.start_session(s, mode=1)
+                await self.start_session(s, mode=3)
                 if ea is not None:
                     await s.invoke(
                         raw.functions.auth.ImportAuthorization(id=ea.id, bytes=ea.bytes)
@@ -154,7 +155,7 @@ class HypertgUpload(HypertgTransfer):
                                 except Exception:
                                     pass
                                 s = Session(up_client, dc_id, ak, tm, is_media=True)
-                                await self.start_session(s, mode=1)
+                                await self.start_session(s, mode=3)
                                 if ea is not None:
                                     await s.invoke(
                                         raw.functions.auth.ImportAuthorization(

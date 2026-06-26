@@ -65,18 +65,8 @@ class HypertgDownload(HypertgTransfer):
     def __init__(self, obj):
         super().__init__(obj)
         source_client = getattr(getattr(obj, "_listener", None), "client", None)
-
-        if source_client is not None and all(
-            source_client is not client for client in self.clients.values()
-        ):
-            source_key = 0 if 0 not in self.clients else max(self.clients.keys()) + 1
-            self.clients[source_key] = source_client
-            self.work_loads[source_key] = self.work_loads.get(source_key, 0)
-            self.num_clients = len(self.clients)
-=======
         self._merge_download_clients(source_client)
         LOGGER.info(f"HypertgDL merged download clients={self.num_clients}")
-    main
         self.chunk_size = min(
             max(Config.HYPER_CHUNK or _MAX_CHUNK, _MIN_CHUNK), _MAX_CHUNK
         )
@@ -137,11 +127,10 @@ class HypertgDownload(HypertgTransfer):
             self._ref_cache.pop(next(iter(self._ref_cache)))
         self._ref_cache[idx] = data
 
-
     @staticmethod
     def _lane_key(idx, lane=None):
         return (idx, lane) if lane is not None else idx
-main
+
     def _message_fid(self):
         try:
             media = self._media_of(self.message)
@@ -151,11 +140,33 @@ main
             return None
 
     async def _fetch_ref(self, idx, client, retries=3, force=False):
+        """Get a FileId that is valid for `client`'s session.
+
+        Prefer refetching from dump_chat so Telegram issues a file reference
+        scoped to the client. If the client cannot see dump_chat, fall back to
+        the source FileId and let the download retry path reject bad refs.
+        """
+        import pyrogram.errors as pyro_errors
+
+        access_errors = tuple(
+            err
+            for err in (
+                getattr(pyro_errors, "ChannelInvalid", None),
+                getattr(pyro_errors, "ChatForbidden", None),
+                getattr(pyro_errors, "PeerIdInvalid", None),
+                getattr(pyro_errors, "UserNotParticipant", None),
+            )
+            if err is not None
+        )
+
         if not force:
             cached = self._ref_get(idx)
             if cached is not None:
                 return cached
+
         last_err = None
+        access_denied = False
+
         for attempt in range(retries):
             try:
                 msg = await client.get_messages(self.dump_chat, self.message.id)
@@ -171,22 +182,40 @@ main
                 self._ref_put(idx, fid)
                 return fid
             except Exception as e:
+                if access_errors and isinstance(e, access_errors):
+                    cname = getattr(getattr(client, "me", None), "username", None)
+                    LOGGER.warning(
+                        f"HypertgDL _fetch_ref: {cname} has no access to "
+                        f"dump_chat {self.dump_chat}: {e} "
+                        f"-- falling back to source FileId"
+                    )
+                    access_denied = True
+                    last_err = e
+                    break
                 last_err = e
                 if attempt < retries - 1:
                     await sleep(attempt + 1)
+
         if fid := self._message_fid():
             cname = getattr(getattr(client, "me", None), "username", None)
-            LOGGER.warning(
-
-            LOGGER.info(
- main
-                "HypertgDL using source file reference for "
-                f"{cname or 'client'} after refetch failed: {last_err}"
-            )
+            if access_denied:
+                LOGGER.warning(
+                    f"HypertgDL {cname}: using source FileId (no dump_chat "
+                    f"access). Add this bot as admin to {self.dump_chat} "
+                    f"for full multi-client speed."
+                )
+            else:
+                LOGGER.info(
+                    "HypertgDL using source file reference for "
+                    f"{cname or 'client'} after refetch failed: {last_err}"
+                )
             self._ref_put(idx, fid)
             return fid
+
         raise ValueError(
-            f"Failed to get file ref with {client.me.username}: {last_err}"
+            "Failed to get file ref with "
+            f"{getattr(getattr(client, 'me', None), 'username', 'client')}: "
+            f"{last_err}"
         )
 
     @staticmethod
@@ -293,7 +322,7 @@ main
             except (FloodWait, FloodPremiumWait) as e:
                 val = e.value if hasattr(e, "value") else 5
                 LOGGER.warning(f"HypertgDL CDN flood {val}s dc={cdn_dc}")
-                await sleep(val + 1)
+                raise
             except FileTokenInvalid:
                 LOGGER.warning(
                     f"HypertgDL CDN FileTokenInvalid dc={cdn_dc} — fallback to non-CDN"
@@ -402,15 +431,10 @@ main
                 except (FloodWait, FloodPremiumWait) as e:
                     flood_count += 1
                     val = e.value if hasattr(e, "value") else 5
-                    if val > 10 or flood_count >= 3:
-                        window = max(min_win, window - max(1, window // 4))
-                        ok_count = 0
-                        flood_count = 0
-                        LOGGER.warning(
-                            f"HypertgDL flood window={window} "
-                            f"val={val}s client={cname} off={off}"
-                        )
-                    await sleep(val + 1)
+                    LOGGER.warning(
+                        f"HypertgDL flood val={val}s client={cname} off={off}"
+                    )
+                    raise
                 except CancelledError:
                     raise
             timeout_count += 1
@@ -599,24 +623,20 @@ main
 
         fid_map = {}
         bad_ref_clients = []
-        for ci in cidx:
-            try:
-                fid_map[ci] = await self._fetch_ref(ci, self.clients[ci])
-            except Exception as e:
-                cname = getattr(getattr(self.clients[ci], "me", None), "username", ci)
+        ref_tasks = {
+            ci: create_task(self._fetch_ref(ci, self.clients[ci])) for ci in cidx
+        }
+        ref_results = await gather(*ref_tasks.values(), return_exceptions=True)
+        for ci, result in zip(ref_tasks.keys(), ref_results):
+            cname = getattr(getattr(self.clients[ci], "me", None), "username", ci)
+            if isinstance(result, BaseException):
                 bad_ref_clients.append(ci)
-                LOGGER.warning(f"HypertgDL skipping {cname}: ref fetch failed: {e}")
-
-        if not fid_map:
-            LOGGER.error("HypertgDL ref fail: no selected client could resolve media")
-            async with _load_lock:
-                for k in cidx:
-                    self.work_loads[k] = max(0, self.work_loads.get(k, 0) - 1)
-            return None
-
-        cidx = list(fid_map.keys())
-        n_use = len(cidx)
-       main
+                LOGGER.warning(
+                    f"HypertgDL skipping {cname}: ref fetch failed: {result}"
+                )
+            else:
+                fid_map[ci] = result
+                LOGGER.info(f"HypertgDL ref OK: client={cname} ci={ci}")
 
         if not fid_map:
             LOGGER.error("HypertgDL ref fail: no selected client could resolve media")
@@ -647,8 +667,8 @@ main
         assigns = [cidx[i % n_use] for i in range(n_parts)]
         LOGGER.info(
             "HypertgDL plan "
-            f"clients={n_use} parts={n_parts} chunk={self.chunk_size} "
-            f"pipe={self.pipeline_depth}"
+            f"clients={n_use} parts={n_parts} lanes={len(assigns)} "
+            f"chunk={self.chunk_size} pipe={self.pipeline_depth}"
         )
 
         unique_clients = set(assigns)
@@ -660,7 +680,18 @@ main
 
         first_fid = fid_map[assigns[0]]
         try:
-            await self._warmup(unique_clients, first_fid.dc_id)
+            lanes_per_client = max(1, n_parts // len(unique_clients))
+            warmup_tasks = []
+            for ci in unique_clients:
+                for lane in range(lanes_per_client):
+                    warmup_tasks.append(
+                        self._get_session(ci, first_fid.dc_id, lane=lane)
+                    )
+            await gather(*warmup_tasks, return_exceptions=True)
+            LOGGER.info(
+                f"HypertgDL warmed {len(warmup_tasks)} sessions "
+                f"across {len(unique_clients)} clients"
+            )
         except Exception as e:
             LOGGER.warning(f"HypertgDL warmup err: {e}")
 
@@ -691,6 +722,8 @@ main
             results = await gather(*self._tasks, return_exceptions=True)
             bad_bots = set()
             for i, r in enumerate(results):
+                if isinstance(r, (FloodWait, FloodPremiumWait)):
+                    raise r
                 if isinstance(r, BaseException):
                     LOGGER.error(f"HypertgDL part {i} failed: {r}")
                     bad_bots.add(assigns[i])
@@ -807,6 +840,8 @@ main
                     *[t for _, _, t in bot_task_map], return_exceptions=True
                 )
                 for (bot_idx, bucket, _), r in zip(bot_task_map, retry_results):
+                    if isinstance(r, (FloodWait, FloodPremiumWait)):
+                        raise r
                     if isinstance(r, BaseException):
                         LOGGER.error(
                             f"HypertgDL retry ci={bot_idx} "

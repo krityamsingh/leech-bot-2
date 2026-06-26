@@ -25,8 +25,8 @@ pillow
 psutil
 pycountry
 pymongo
-pyrotgfork
-pytgcrypto
+Kurigram
+TgrCrypto
 python-magic
 pytz
 qbittorrent-api

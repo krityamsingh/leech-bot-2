@@ -45,13 +45,13 @@ from ..telegram_helper.tg_transfer import MB, HypertgTransfer, _sess_connected
 KB = 1024
 _MIN_CHUNK = 64 * KB
 _MAX_CHUNK = 1 * MB
-_MIN_PART = 8 * MB
-_TARGET_PART = 16 * MB
+_MIN_PART = 4 * MB
+_TARGET_PART = 8 * MB
 _DEFAULT_PIPELINE = 64
-_MIN_PIPELINE = 4
+_MIN_PIPELINE = 8
 _MAX_PIPELINE_MULT = 4
 _LOW_WORKERS = 2
-_HIGH_WORKERS = max(8, (cpu_count() or 4) * 2)
+_HIGH_WORKERS = 64
 _load_lock = Lock()
 
 
@@ -77,7 +77,8 @@ class HypertgDownload(HypertgTransfer):
             _LOW_WORKERS, min(_HIGH_WORKERS, self.num_clients)
         )
         base_pipe = max(Config.HYPER_PIPELINE or _DEFAULT_PIPELINE, _MIN_PIPELINE)
-        self.pipeline_depth = max(base_pipe // max(self.num_parts, 1), _MIN_PIPELINE)
+        lanes_per_client = max(1, self.num_parts // max(self.num_clients, 1))
+        self.pipeline_depth = max(base_pipe // lanes_per_client, _MIN_PIPELINE)
         self.message = None
         self.dump_chat = None
         self.directory = None
@@ -667,7 +668,8 @@ class HypertgDownload(HypertgTransfer):
         chunk_parts = max(1, (self.file_size + self.chunk_size - 1) // self.chunk_size)
         n_parts = min(configured_parts, chunk_parts, max(n_use, size_parts))
         base_pipe = max(Config.HYPER_PIPELINE or _DEFAULT_PIPELINE, _MIN_PIPELINE)
-        self.pipeline_depth = max(base_pipe // max(n_parts, 1), _MIN_PIPELINE)
+        lanes_per_client = max(1, n_parts // max(n_use, 1))
+        self.pipeline_depth = max(base_pipe // lanes_per_client, _MIN_PIPELINE)
         psz = self.file_size // n_parts if n_parts > 0 else self.file_size
         ranges = [(i * psz, min((i + 1) * psz, self.file_size)) for i in range(n_parts)]
         assigns = [cidx[i % n_use] for i in range(n_parts)]

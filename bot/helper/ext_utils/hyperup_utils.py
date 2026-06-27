@@ -118,7 +118,10 @@ class HypertgUpload(HypertgTransfer):
             # Session pool: Telegram enforces ~4-10 concurrent TCP sessions per
             # account per DC. Creating one session per worker floods this limit
             # and causes BrokenPipe on all workers. Instead, share a small pool.
-            _MAX_SESSIONS = 4 if not _is_bot else 8
+            # The 150ms staggered startup below prevents the simultaneous TCP
+            # handshake flood that originally caused BrokenPipe, so user accounts
+            # can safely hold 8 sessions (vs 4) — roughly doubling upload BW.
+            _MAX_SESSIONS = 8
             n_sessions = min(n_workers, _MAX_SESSIONS)
 
             fp = open(file_path, "rb", buffering=8 * 1024 * 1024)

@@ -508,7 +508,12 @@ class HypertgDownload(HypertgTransfer):
                         continue
                     ok_count += 1
                     if ok_count >= window:
-                        window = min(window + 2, max_win)
+                        # Aggressive additive increase: reach max window within
+                        # ~100-200 successful chunks instead of thousands. A file
+                        # that finishes in ~30s otherwise never sees full speed.
+                        # Safe because the FloodWait/timeout paths below halve the
+                        # window on congestion, so this stays self-correcting.
+                        window = min(window + max(2, window // 2), max_win)
                         ok_count = 0
                     if roff == first_off and roff + csz >= end:
                         chunk = chunk[first_trim : last_byte - roff + 1]

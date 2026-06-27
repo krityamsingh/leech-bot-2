@@ -4,14 +4,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── REQUIRED CREDENTIALS ─────────────────────────────────────────────────────
-# BOT_TOKEN is intentionally empty — set it as a Railway env var per deployment.
-BOT_TOKEN = ""
+# Hardcoded for this deployment. A Railway env var BOT_TOKEN (if set) still
+# takes precedence via Config.load_env().
+BOT_TOKEN = "8643615014:AAFRhgZ9lOTzoq53nfQt3yPqaGDxDQlkjDE"
 OWNER_ID = 6118760915
 TELEGRAM_API = 26676741
 TELEGRAM_HASH = "6fbc29f23c15bdb0c7fbbefe65c9193a"
 
 # ── PERSISTENT STORAGE ───────────────────────────────────────────────────────
-DATABASE_URL = ""
+DATABASE_URL = "mongodb+srv://pabitrabarman0002:rajrajkumar02@rajrajkumar.rrwa7zy.mongodb.net/?retryWrites=true&w=majority&appName=Rajrajkumar"
 DOWNLOAD_DIR = "/usr/src/app/downloads/"
 
 # ── COMMAND ROUTING ──────────────────────────────────────────────────────────

@@ -90,6 +90,7 @@ class HypertgUpload(HypertgTransfer):
         fp = None
         q = None
         workers = []
+        pool = []
 
         try:
             if self.clients:
@@ -109,14 +110,16 @@ class HypertgUpload(HypertgTransfer):
                 _concurrent = 1
 
             _is_bot = bool(getattr(getattr(up_client, "me", None), "is_bot", True))
-            # MAX-UPLOAD tuning:
-            #   - user sessions: default 64 workers, cap 48 per single upload
-            #   - bot sessions:  default 32 workers, cap 24 per single upload
-            # (Telegram's per-session throttle still applies — these limits saturate
-            # an individual session faster but cannot exceed account-level caps.)
+            # Worker count: how many parts to pump concurrently from the queue
             n_workers = Config.HYPER_THREADS or (32 if _is_bot else 64)
             n_workers = max(1, n_workers // _concurrent)
             n_workers = min(n_workers, 48 if not _is_bot else 24)
+
+            # Session pool: Telegram enforces ~4-10 concurrent TCP sessions per
+            # account per DC. Creating one session per worker floods this limit
+            # and causes BrokenPipe on all workers. Instead, share a small pool.
+            _MAX_SESSIONS = 4 if not _is_bot else 8
+            n_sessions = min(n_workers, _MAX_SESSIONS)
 
             fp = open(file_path, "rb", buffering=8 * 1024 * 1024)
             q = Queue(n_workers * 8)  # was *4, deeper queue = less worker stalling
@@ -126,44 +129,74 @@ class HypertgUpload(HypertgTransfer):
                 f"is_bot={_is_bot} client={ul_ci}"
             )
 
-            async def _worker(wid):
-                s = await self._acquire_session(up_client, dc_id, is_media=True)
+            # Build session pool with staggered startup to avoid TCP flood
+            pool = []
+            for si in range(n_sessions):
                 try:
-                    while True:
-                        try:
-                            data = await q.get()
-                        except QueueShutDown:
-                            return
-                        for attempt in range(5):
-                            try:
-                                await s.invoke(data)
+                    s = await self._acquire_session(up_client, dc_id, is_media=True)
+                    pool.append(s)
+                    if si < n_sessions - 1:
+                        await sleep(0.15)  # stagger: avoid simultaneous TCP handshakes
+                except Exception as e:
+                    LOGGER.warning(f"HypertgUL session pool slot {si} failed: {e}")
+            if not pool:
+                raise RuntimeError("HypertgUL: could not establish any upload session")
+            LOGGER.info(f"HypertgUL session pool ready: {len(pool)} sessions, {n_workers} workers")
+
+            _pool_idx = [0]
+            _pool_lock = Lock()
+
+            async def _get_pool_session():
+                async with _pool_lock:
+                    s = pool[_pool_idx[0] % len(pool)]
+                    _pool_idx[0] += 1
+                return s
+
+            async def _replace_pool_session(old_s):
+                """Replace a broken session in the pool."""
+                try:
+                    await old_s.stop()
+                except Exception:
+                    pass
+                try:
+                    new_s = await self._acquire_session(up_client, dc_id, is_media=True)
+                    async with _pool_lock:
+                        for i, s in enumerate(pool):
+                            if s is old_s:
+                                pool[i] = new_s
                                 break
-                            except StopTransmission:
-                                raise
-                            except CancelledError:
-                                return
-                            except (OSError, TimeoutError, ConnectionError):
-                                LOGGER.warning(
-                                    f"HypertgUL worker {wid} transport error "
-                                    f"attempt {attempt + 1}/5 — reconnecting"
-                                )
-                                try:
-                                    await s.stop()
-                                except Exception:
-                                    pass
-                                s = await self._acquire_session(
-                                    up_client, dc_id, is_media=True
-                                )
-                                await sleep(1)
-                            except Exception:
-                                if attempt == 4:
-                                    break
-                                await sleep(2**attempt)
-                finally:
+                        else:
+                            pool.append(new_s)
+                except Exception as e:
+                    LOGGER.warning(f"HypertgUL session replace failed: {e}")
+
+            async def _worker(wid):
+                while True:
                     try:
-                        await s.stop()
-                    except Exception:
-                        pass
+                        data = await q.get()
+                    except QueueShutDown:
+                        return
+                    s = await _get_pool_session()
+                    for attempt in range(5):
+                        try:
+                            await s.invoke(data)
+                            break
+                        except StopTransmission:
+                            raise
+                        except CancelledError:
+                            return
+                        except (OSError, TimeoutError, ConnectionError) as e:
+                            LOGGER.warning(
+                                f"HypertgUL worker {wid} transport error "
+                                f"attempt {attempt + 1}/5 — reconnecting"
+                            )
+                            await _replace_pool_session(s)
+                            s = await _get_pool_session()
+                            await sleep(1)
+                        except Exception:
+                            if attempt == 4:
+                                break
+                            await sleep(2**attempt)
 
             workers = [create_task(_worker(i)) for i in range(n_workers)]
 
@@ -245,6 +278,12 @@ class HypertgUpload(HypertgTransfer):
                 q.shutdown(immediate=True)
             if workers:
                 await gather(*workers, return_exceptions=True)
+            # Close session pool
+            for s in pool:
+                try:
+                    await s.stop()
+                except Exception:
+                    pass
             if fp:
                 try:
                     fp.close()

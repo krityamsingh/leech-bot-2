@@ -38,6 +38,7 @@ class BotCommands:
         "Help": ["help", "h"],
         "Log": "log",
         "Shell": "shell",
+        "Shell1": "shell1",
         "AExec": "aexec",
         "Exec": "exec",
         "ClearLocals": "clearlocals",

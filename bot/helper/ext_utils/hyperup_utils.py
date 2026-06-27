@@ -23,6 +23,7 @@ from ... import LOGGER
 from ...core.config_manager import Config
 from ..telegram_helper.tg_transfer import MB, HypertgTransfer
 from .bot_utils import sync_to_async
+from .hyper_coord import coordinator as _hyper_coord
 
 _ul_load_lock = Lock()
 _ul_slots = [None]
@@ -91,6 +92,7 @@ class HypertgUpload(HypertgTransfer):
         q = None
         workers = []
         pool = []
+        coord_handle = None
 
         try:
             if self.clients:
@@ -109,10 +111,21 @@ class HypertgUpload(HypertgTransfer):
                 up_client = client
                 _concurrent = 1
 
+            # Register with the global coordinator so concurrent uploads (and
+            # downloads) on the SAME account divide its in-flight budget fairly
+            # rather than self-flooding. share_factor (0..1] scales the worker
+            # count so 1 upload = full speed, k uploads = ~1/k each (stable).
+            coord_handle = await _hyper_coord.register(
+                [up_client], is_upload=True
+            )
+            _share = coord_handle.share_factor
+
             _is_bot = bool(getattr(getattr(up_client, "me", None), "is_bot", True))
-            # Worker count: how many parts to pump concurrently from the queue
+            # Worker count: how many parts to pump concurrently from the queue.
+            # Scaled by the coordinator's fair share so concurrent transfers
+            # don't collectively oversaturate the account.
             n_workers = Config.HYPER_THREADS or (32 if _is_bot else 64)
-            n_workers = max(1, n_workers // _concurrent)
+            n_workers = max(1, int(n_workers * _share))
             n_workers = min(n_workers, 48 if not _is_bot else 24)
 
             # Session pool: Telegram enforces ~4-10 concurrent TCP sessions per
@@ -121,8 +134,9 @@ class HypertgUpload(HypertgTransfer):
             # The 150ms staggered startup below prevents the simultaneous TCP
             # handshake flood that originally caused BrokenPipe, so user accounts
             # can safely hold 8 sessions (vs 4) — roughly doubling upload BW.
+            # Pool size also scales down with the fair share under concurrency.
             _MAX_SESSIONS = 8
-            n_sessions = min(n_workers, _MAX_SESSIONS)
+            n_sessions = max(1, min(n_workers, _MAX_SESSIONS, int(_MAX_SESSIONS * _share) or 1))
 
             fp = open(file_path, "rb", buffering=8 * 1024 * 1024)
             q = Queue(n_workers * 8)  # was *4, deeper queue = less worker stalling
@@ -272,6 +286,11 @@ class HypertgUpload(HypertgTransfer):
             LOGGER.error(f"HypertgUL upload fail: {type(e).__name__}: {e}")
             raise
         finally:
+            if coord_handle is not None:
+                try:
+                    await coord_handle.release()
+                except Exception as e:
+                    LOGGER.warning(f"HypertgUL coord release: {e}")
             if ul_ci is not None:
                 async with _ul_load_lock:
                     self.work_loads[ul_ci] = max(0, self.work_loads.get(ul_ci, 0) - 1)

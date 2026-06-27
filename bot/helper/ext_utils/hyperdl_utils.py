@@ -41,6 +41,7 @@ from ... import LOGGER
 from ...core.config_manager import Config
 from ...core.tg_client import TgClient
 from ..telegram_helper.tg_transfer import MB, HypertgTransfer, _sess_connected
+from .hyper_coord import coordinator as _hyper_coord
 
 KB = 1024
 _MIN_CHUNK = 64 * KB
@@ -89,6 +90,8 @@ class HypertgDownload(HypertgTransfer):
         self._cdn_info = {}
         self._cdn_sessions = {}
         self._no_access_dump = set()
+        self._coord_handle = None
+        self._coord_budget = 0  # 0 = uncapped (no coordinator active)
 
     def _merge_download_clients(self, source_client):
         ordered = []
@@ -364,7 +367,12 @@ class HypertgDownload(HypertgTransfer):
         last_byte = end - 1
         window = self.pipeline_depth
         min_win = _MIN_PIPELINE
-        max_win = window * _MAX_PIPELINE_MULT
+        # Cap the growth ceiling at this file's fair share of the per-account
+        # budget (set by the coordinator) so the additive-increase can never
+        # push concurrent files into a self-induced FloodWait.
+        coord_cap = getattr(self, "_coord_budget", 0)
+        base_max = window * _MAX_PIPELINE_MULT
+        max_win = min(base_max, coord_cap) if coord_cap else base_max
         inflight = set()
         _inflight_offsets = {}
         cur = first_off
@@ -660,6 +668,16 @@ class HypertgDownload(HypertgTransfer):
         cidx = list(fid_map.keys())
         n_use = len(cidx)
 
+        # Register with the global fair-share coordinator so concurrent
+        # downloads on the SAME account divide the per-account in-flight
+        # budget evenly instead of self-flooding. With k concurrent files,
+        # each gets ~1/k of the budget → no FloodWait, stable aggregate
+        # speed. Across N accounts, files spread out and each hits full
+        # speed again. Released in the finally block below.
+        picked_clients = [self.clients[ci] for ci in cidx]
+        self._coord_handle = await _hyper_coord.register(picked_clients)
+        coord_share = self._coord_handle.share_factor
+
         min_part = max(self.chunk_size * 8, _MIN_PART)
         target_part = max(self.chunk_size * 16, _TARGET_PART)
         configured_parts = Config.HYPER_THREADS or min(
@@ -674,14 +692,23 @@ class HypertgDownload(HypertgTransfer):
         n_parts = min(configured_parts, chunk_parts, max(n_use, size_parts))
         base_pipe = max(Config.HYPER_PIPELINE or _DEFAULT_PIPELINE, _MIN_PIPELINE)
         lanes_per_client = max(1, n_parts // max(n_use, 1))
-        self.pipeline_depth = max(base_pipe // lanes_per_client, _MIN_PIPELINE)
+        # Per-lane window. Without coordination this is the per-file value;
+        # with coordination it is capped to this file's fair share of the
+        # account budget so k simultaneous files can't collectively exceed it.
+        solo_depth = max(base_pipe // lanes_per_client, _MIN_PIPELINE)
+        fair_budget = self._coord_handle.pipeline_depth(base_pipe)
+        self.pipeline_depth = max(_MIN_PIPELINE, min(solo_depth, fair_budget))
+        # Absolute per-lane ceiling for the additive-increase loop so concurrent
+        # files can't collectively burst past the account budget.
+        self._coord_budget = fair_budget
         psz = self.file_size // n_parts if n_parts > 0 else self.file_size
         ranges = [(i * psz, min((i + 1) * psz, self.file_size)) for i in range(n_parts)]
         assigns = [cidx[i % n_use] for i in range(n_parts)]
         LOGGER.info(
             "HypertgDL plan "
             f"clients={n_use} parts={n_parts} lanes={len(assigns)} "
-            f"chunk={self.chunk_size} pipe={self.pipeline_depth}"
+            f"chunk={self.chunk_size} pipe={self.pipeline_depth} "
+            f"share={coord_share:.2f}"
         )
 
         unique_clients = set(assigns)
@@ -900,6 +927,12 @@ class HypertgDownload(HypertgTransfer):
                     t.cancel()
             if self._tasks:
                 await gather(*self._tasks, return_exceptions=True)
+            if self._coord_handle is not None:
+                try:
+                    await self._coord_handle.release()
+                except Exception as e:
+                    LOGGER.warning(f"HypertgDL coord release: {e}")
+                self._coord_handle = None
             async with _load_lock:
                 for k in cidx:
                     self.work_loads[k] = max(0, self.work_loads.get(k, 0) - 1)

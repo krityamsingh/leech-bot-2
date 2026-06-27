@@ -227,6 +227,15 @@ class Config:
 
     @classmethod
     def load_env(cls):
+        # Load a gitignored .env file first so secrets (DATABASE_URL, tokens,
+        # session strings) can live outside of config.py / git. Real OS env
+        # vars still win, so Railway/Cloud deploy vars always take precedence.
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv(override=False)
+        except ImportError:
+            pass
         config_vars = cls.get_all()
         for key in config_vars:
             env_value = getenv(key)

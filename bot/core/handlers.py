@@ -249,6 +249,13 @@ def add_handlers():
         )
     )
     TgClient.bot.add_handler(
+        MessageHandler(
+            run_shell,
+            filters=command(BotCommands.Shell1Command, case_sensitive=True)
+            & CustomFilters.sudo,
+        )
+    )
+    TgClient.bot.add_handler(
         EditedMessageHandler(
             run_shell,
             filters=command(BotCommands.ShellCommand, case_sensitive=True)

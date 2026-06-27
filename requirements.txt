@@ -25,6 +25,7 @@ pillow
 psutil
 pycountry
 pymongo
+python-dotenv
 Kurigram
 TgrCrypto
 python-magic

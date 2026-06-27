@@ -289,8 +289,8 @@ class HypertgTransfer:
             is_cross = dc_id != main_dc
         except Exception:
             is_cross = False
-        if is_cross and not hasattr(client, "get_session"):
-            # PyroTgFork path — manual ExportAuthorization
+        if is_cross:
+            # Run manual ExportAuthorization / ImportAuthorization to guarantee session is authorized on remote DC.
             for attempt in range(6):
                 try:
                     e = await client.invoke(
@@ -301,9 +301,10 @@ class HypertgTransfer:
                     )
                     break
                 except AuthBytesInvalid:
+                    cname = getattr(getattr(client, "me", None), "username", None) or "User"
                     LOGGER.warning(
                         f"HypertgTransfer AuthBytesInvalid attempt {attempt + 1}/6 "
-                        f"client={client.me.username} dc={dc_id}"
+                        f"client={cname} dc={dc_id}"
                     )
                     await sleep(1)
             else:

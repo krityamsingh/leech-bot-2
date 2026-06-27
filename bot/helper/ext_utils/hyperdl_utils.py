@@ -87,6 +87,7 @@ class HypertgDownload(HypertgTransfer):
         self._ref_cache = {}
         self._cdn_info = {}
         self._cdn_sessions = {}
+        self._no_access_dump = set()
 
     def _merge_download_clients(self, source_client):
         ordered = []
@@ -162,6 +163,9 @@ class HypertgDownload(HypertgTransfer):
             if err is not None
         )
 
+        if idx in getattr(self, "_no_access_dump", set()):
+            return self._message_fid()
+
         if not force:
             cached = self._ref_get(idx)
             if cached is not None:
@@ -193,6 +197,8 @@ class HypertgDownload(HypertgTransfer):
                         f"-- falling back to source FileId"
                     )
                     access_denied = True
+                    if hasattr(self, "_no_access_dump"):
+                        self._no_access_dump.add(idx)
                     last_err = e
                     break
                 last_err = e

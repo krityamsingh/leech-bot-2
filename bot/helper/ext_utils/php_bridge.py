@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .. import LOGGER
+from ... import LOGGER
 
 _PHP_URL = os.environ.get("PHP_BRIDGE_URL", "http://127.0.0.1:9090")
 _CB_FAILS_BEFORE_OPEN = 3

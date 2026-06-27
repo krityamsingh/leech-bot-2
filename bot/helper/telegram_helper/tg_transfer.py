@@ -113,6 +113,23 @@ def _apply_hyper_patches():
 MB = 1024 * 1024
 
 
+def _sess_connected(s) -> bool:
+    """Safely check if a Pyrogram Session is connected.
+
+    Handles three cases:
+    - Attribute missing (Kurigram get_session() sessions) → treat as connected
+    - asyncio.Event (newer PyroTgFork) → check .is_set()
+    - bool (older builds) → use directly
+    """
+    try:
+        val = s.is_connected
+    except AttributeError:
+        return True  # Kurigram-managed session; assume alive
+    if hasattr(val, "is_set"):  # asyncio.Event
+        return val.is_set()
+    return bool(val)
+
+
 class HypertgTransfer:
     def __init__(self, obj):
         _apply_hyper_patches()
@@ -248,7 +265,10 @@ class HypertgTransfer:
                 raise e
             else:
                 break
-        s.is_connected.set()
+        # s.is_connected may be an asyncio.Event or a bool depending on build
+        ic = getattr(s, "is_connected", None)
+        if ic is not None and hasattr(ic, "set"):
+            ic.set()
 
     def _get_lock(self, client_id, dc_id, lane=None):
         key = (client_id, dc_id, lane)
@@ -297,7 +317,7 @@ class HypertgTransfer:
         session_key = (idx, lane) if lane is not None else idx
         s = self._sessions.get(session_key)
         if s and not force:
-            if s.is_connected and s.dc_id == dc_id:
+            if _sess_connected(s) and s.dc_id == dc_id:
                 return s
             try:
                 await s.stop()
@@ -307,7 +327,7 @@ class HypertgTransfer:
         async with lock:
             s = self._sessions.get(session_key)
             if s and not force:
-                if s.is_connected and s.dc_id == dc_id:
+                if _sess_connected(s) and s.dc_id == dc_id:
                     return s
             s = await self._mk_session(self.clients[idx], dc_id)
             if lane is not None:
@@ -338,7 +358,7 @@ class HypertgTransfer:
                     if s in client.media_sessions.values():
                         break
                 else:
-                    if s.is_connected:
+                    if _sess_connected(s):
                         await s.stop()
             except Exception:
                 pass

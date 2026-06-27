@@ -40,7 +40,7 @@ except ImportError:
 from ... import LOGGER
 from ...core.config_manager import Config
 from ...core.tg_client import TgClient
-from ..telegram_helper.tg_transfer import MB, HypertgTransfer
+from ..telegram_helper.tg_transfer import MB, HypertgTransfer, _sess_connected
 
 KB = 1024
 _MIN_CHUNK = 64 * KB
@@ -277,7 +277,7 @@ class HypertgDownload(HypertgTransfer):
     async def _get_cdn_session(self, idx, cdn_dc, client, lane=None):
         key = (idx, lane, cdn_dc)
         s = self._cdn_sessions.get(key)
-        if s and s.is_connected:
+        if s and _sess_connected(s):
             return s
         s = await self._acquire_session(client, cdn_dc, is_media=True, is_cdn=True)
         self._cdn_sessions[key] = s
@@ -894,7 +894,7 @@ class HypertgDownload(HypertgTransfer):
                     self.work_loads[k] = max(0, self.work_loads.get(k, 0) - 1)
             for s in self._cdn_sessions.values():
                 try:
-                    if s.is_connected:
+                    if _sess_connected(s):
                         await s.stop()
                 except Exception:
                     pass

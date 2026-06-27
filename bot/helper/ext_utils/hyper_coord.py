@@ -42,8 +42,10 @@ from ...core.config_manager import Config
 # Per-account ceiling on concurrent in-flight MTProto requests.
 # Telegram tolerates roughly this many simultaneous GetFile/SaveFilePart
 # requests per session before FloodWait kicks in. It is shared across every
-# file using that account and divided evenly (fair share).
-DEFAULT_PER_ACCOUNT_BUDGET = 64
+# file using that account and divided evenly (fair share). 128 is an
+# aggressive ceiling for fast single-file throughput; the additive-increase
+# in _pipeline_fetch self-corrects down on any FloodWait.
+DEFAULT_PER_ACCOUNT_BUDGET = 128
 
 # Absolute floor so a single transfer never collapses to a useless window.
 _MIN_PIPELINE = 8
@@ -51,7 +53,7 @@ _MIN_PIPELINE = 8
 # Total in-flight requests the bot as a whole should try to sustain. Used as
 # the global pool when more than one account is available, so aggregate
 # throughput scales with account count instead of being pinned to one.
-DEFAULT_GLOBAL_BUDGET = 256
+DEFAULT_GLOBAL_BUDGET = 512
 
 
 class _AccountState:

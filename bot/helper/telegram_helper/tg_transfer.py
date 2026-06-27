@@ -73,6 +73,19 @@ async def _tcp_tuned_connect(self, address):
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            # Enlarge socket buffers for sustained high-throughput transfers.
+            # Default kernel buffers (often ~200KB) cap a single TCP stream's
+            # BDP at high RTT; 8MB each lets each media session saturate the
+            # link. Ignored silently if the kernel caps max buffer below this.
+            _BUF = 8 * 1024 * 1024
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, _BUF)
+            except OSError:
+                pass
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, _BUF)
+            except OSError:
+                pass
         except OSError as e:
             LOGGER.info(f"HypertgTCP socket tune failed: {e}")
 

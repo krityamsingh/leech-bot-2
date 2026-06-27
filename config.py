@@ -32,7 +32,7 @@ HELPER_STRINGS = ""
 # ── HYPER TELEGRAM TRANSFER ──────────────────────────────────────────────────
 USE_HYPER = True
 HYPER_THREADS = 64              # 0 = auto. 64 = explicitly max parallel workers per upload
-HYPER_PIPELINE = 64             # in-flight requests per client (MTProto window)
+HYPER_PIPELINE = 128            # in-flight requests per client (MTProto window) — raised for instant max speed
 HYPER_CHUNK = 1024 * 1024       # 1 MB = standard MTProto media chunk
 
 # ── PHP / MadelineProto BRIDGE (optional) ────────────────────────────────────

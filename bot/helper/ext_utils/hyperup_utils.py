@@ -31,7 +31,7 @@ _ul_slots_lock = Lock()
 
 
 KB = 1024
-PART_SIZE = 512 * KB
+PART_SIZE = 1024 * KB
 
 
 class HypertgUpload(HypertgTransfer):
@@ -126,7 +126,7 @@ class HypertgUpload(HypertgTransfer):
             # don't collectively oversaturate the account.
             n_workers = Config.HYPER_THREADS or (32 if _is_bot else 64)
             n_workers = max(1, int(n_workers * _share))
-            n_workers = min(n_workers, 48 if not _is_bot else 24)
+            n_workers = min(n_workers, 96 if not _is_bot else 48)
 
             # Session pool: Telegram enforces ~4-10 concurrent TCP sessions per
             # account per DC. Creating one session per worker floods this limit
@@ -135,7 +135,7 @@ class HypertgUpload(HypertgTransfer):
             # handshake flood that originally caused BrokenPipe, so user accounts
             # can safely hold 8 sessions (vs 4) — roughly doubling upload BW.
             # Pool size also scales down with the fair share under concurrency.
-            _MAX_SESSIONS = 8
+            _MAX_SESSIONS = 16
             n_sessions = max(1, min(n_workers, _MAX_SESSIONS, int(_MAX_SESSIONS * _share) or 1))
 
             fp = open(file_path, "rb", buffering=8 * 1024 * 1024)

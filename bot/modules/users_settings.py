@@ -1,1464 +1,1259 @@
-from asyncio import sleep
-from ast import literal_eval
-from pyrogram.enums import ButtonStyle
+
+#!/usr/bin/env python3
+from datetime import datetime
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.filters import command, regex, create, text, photo, document
+from aiofiles import open as aiopen
+from aiofiles.os import remove as aioremove, path as aiopath, mkdir
+from langcodes import Language
+from os import path as ospath, getcwd
+from PIL import Image
+from time import time
 from functools import partial
 from html import escape
 from io import BytesIO
-from os import getcwd
-from re import sub
-from time import time
+from asyncio import sleep
+from cryptography.fernet import Fernet
 
-from aiofiles.os import makedirs, remove
-from aiofiles.os import path as aiopath
-from langcodes import Language
-from pyrogram.filters import create
-from pyrogram.handlers import MessageHandler
-
-
-from .. import auth_chats, excluded_extensions, sudo_users, user_data
-from ..core.config_manager import Config
-from ..core.tg_client import TgClient
-from ..helper.ext_utils.bot_utils import (
-    get_size_bytes,
-    new_task,
+import asyncio
+from bot import (
+    OWNER_ID,
+    LOGGER,
+    bot,
+    user_data,
+    config_dict,
+    categories_dict,
+    DATABASE_URL,
+    IS_PREMIUM_USER,
+    MAX_SPLIT_SIZE,
+)
+from bot.helper.telegram_helper.message_utils import (
+    sendMessage,
+    sendCustomMsg,
+    editMessage,
+    deleteMessage,
+    sendFile,
+    chat_info,
+    user_info,
+)
+from bot.helper.telegram_helper.filters import CustomFilters
+from bot.helper.telegram_helper.bot_commands import BotCommands
+from bot.helper.telegram_helper.button_build import ButtonMaker
+from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
+from bot.helper.ext_utils.db_handler import DbManger
+from bot.helper.ext_utils.bot_utils import (
     update_user_ldata,
+    sync_to_async,
+    new_task,
+    is_url,
+    is_gdrive_link,
+    is_rclone_path,
+    get_readable_file_size,
 )
-from ..helper.ext_utils.db_handler import database
-from ..helper.ext_utils.mega_utils import get_mega_account_info
-from ..helper.ext_utils.media_utils import create_thumb
-from ..helper.ext_utils.status_utils import get_readable_file_size
-from ..helper.telegram_helper.button_build import ButtonMaker
-from ..helper.telegram_helper.message_utils import (
-    delete_message,
-    edit_message,
-    send_file,
-    send_message,
+from bot.helper.ext_utils.subtitle_utils import (
+    COLOR_OPTIONS,
+    BG_COLOR_OPTIONS,
+    validate_and_escape_subtitle_text,
 )
+from bot.helper.mirror_utils.upload_utils.ddlserver.gofile import Gofile
+from bot.helper.themes import BotTheme
+from bot.helper.ext_utils.personal_bot_manager import PersonalBotManager, verify_personal_bot, verify_personal_dump
 
 handler_dict = {}
-
-leech_options = [
-    "THUMBNAIL",
-    "LEECH_SPLIT_SIZE",
-    "LEECH_DUMP_CHAT",
-    "LEECH_PREFIX",
-    "LEECH_SUFFIX",
-    "LEECH_CAPTION",
-    "THUMBNAIL_LAYOUT",
-]
-uphoster_options = [
-    "GOFILE_TOKEN",
-    "GOFILE_FOLDER_ID",
-    "BUZZHEAVIER_TOKEN",
-    "BUZZHEAVIER_FOLDER_ID",
-    "PIXELDRAIN_KEY",
-    "DEVUPLOADS_KEY",
-    "DEVUPLOADS_FOLDER",
-    "VIKINGFILE_HASH",
-    "VIKINGFILE_FOLDER",
-]
-rclone_options = ["RCLONE_CONFIG", "RCLONE_PATH", "RCLONE_FLAGS"]
-gdrive_options = ["TOKEN_PICKLE", "GDRIVE_ID", "INDEX_URL", "DRIVE_CAT"]
-ffset_options = [
-    "FFMPEG_CMDS",
-    "METADATA",
-    "AUDIO_METADATA",
-    "VIDEO_METADATA",
-    "SUBTITLE_METADATA",
-]
-advanced_options = [
-    "EXCLUDED_EXTENSIONS",
-    "NAME_SWAP",
-    "YT_DLP_OPTIONS",
-    "UPLOAD_PATHS",
-    "USER_COOKIE_FILE",
-]
-yt_options = ["YT_DESP", "YT_TAGS", "YT_CATEGORY_ID", "YT_PRIVACY_STATUS"]
-mega_options = ["MEGA_EMAIL", "MEGA_PASSWORD"]
-
-user_settings_text = {
-    "THUMBNAIL": (
-        "Photo or Doc",
-        "Custom Thumbnail is used as the thumbnail for the files you upload to telegram in media or document mode.",
-        "<i>Send a photo to save it as custom thumbnail.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "RCLONE_CONFIG": (
+desp_dict = {
+    "rcc": [
+        "RClone is a command-line program to sync files and directories to and from different cloud storage providers like GDrive, OneDrive...",
+        "Send rclone.conf. \n<b>Timeout:</b> 60 sec",
+    ],
+    "lprefix": [
+        "Leech Filename Prefix is the Front Part attacted with the Filename of the Leech Files.",
+        'Send Leech Filename Prefix. Documentation Here : <a href="https://t.me/CANON_BOTS/4">Click Me</a> \n<b>Timeout:</b> 60 sec',
+    ],
+    "lsuffix": [
+        "Leech Filename Suffix is the End Part attached with the Filename of the Leech Files",
+        'Send Leech Filename Suffix. Documentation Here : <a href="https://t.me/CANON_BOTS/4">Click Me</a> \n<b>Timeout:</b> 60 sec',
+    ],
+    "lremname_auto": [
+        "<b><i>AutoRename Template uses tags to automatically rename files based on metadata like title, season, episode, quality</i></b>",
+        '<b>Send AutoRename Template. Documentation Here :</b> <a href="https://t.me/CANON_BOTS/3">Click Me</a>\n<b>Example:</b> <code>{title} S{season}E{episode} {quality}</code> \n<b>Timeout:</b> 60 sec',
+    ],
+    "lremname_regex": [
+        "<b><i>Regex Remname uses regex patterns to remove or manipulate filenames</i></b>",
+        '<b>Send Regex Remname. Documentation Here :</b> <a href="https://t.me/CANON_BOTS/4">Click Me</a>\n<b>Example:</b> <code>|pattern:replacement|pattern2:replacement2</code> \n<b>Timeout:</b> 60 sec',
+    ],
+    "intro_text": [
+        "<b><i>Intro Subtitle Text will appear at the start of your video</i></b>",
+        '<b>Send Intro Text</b>\n<b>Example:</b> <code>Enjoy the Movie!</code>\n<b>Max Length:</b> 200 characters\n<b>Timeout:</b> 60 sec',
+    ],
+    "intro_duration": [
+        "<b><i>Duration (in seconds) for how long the intro subtitle will display</i></b>",
+        '<b>Send Duration in seconds</b>\n<b>Example:</b> <code>10</code>\n<b>Max:</b> 30 seconds\n<b>Timeout:</b> 60 sec',
+    ],
+    "intro_fontsize": [
+        "<b><i>Font size for the intro subtitle text</i></b>",
+        '<b>Send Font Size</b>\n<b>Example:</b> <code>28</code>\n<b>Range:</b> 12-72\n<b>Timeout:</b> 60 sec',
+    ],
+    "lcaption": [
+        "Leech Caption is the Custom Caption on the Leech Files Uploaded by the bot",
+        'Send Leech Caption. You can add HTML tags. Documentation Here : <a href="https://t.me/CANON_BOTS/4">Click Me</a> \n<b>Timeout:</b> 60 sec',
+    ],
+    "ldump": [
+        "Leech Files User Dump for Personal Use as a Storage.",
+        "Send Leech Dump Channel ID\n➲ <b>Format:</b> \ntitle chat_id/@username\ntitle2 chat_id2/@username2. \n\n<b>NOTE:</b>Make Bot Admin in the Channel else it will not accept\n<b>Timeout:</b> 60 sec",
+    ],
+    "mprefix": [
+        "Mirror Filename Prefix is the Front Part attacted with the Filename of the Mirrored/Cloned Files.",
+        "Send Mirror Filename Prefix. \n<b>Timeout:</b> 60 sec",
+    ],
+    "msuffix": [
+        "Mirror Filename Suffix is the End Part attached with the Filename of the Mirrored/Cloned Files",
+        "Send Mirror Filename Suffix. \n<b>Timeout:</b> 60 sec",
+    ],
+    "mremname": [
+        "Mirror Filename Remname is combination of Regex(s) used for removing or manipulating Filename of the Mirrored/Cloned Files",
+        "Send Mirror Filename Remname. \n<b>Timeout:</b> 60 sec",
+    ],
+    "thumb": [
+        "Custom Thumbnail to appear on the Leeched files uploaded by the bot",
+        "Send a photo to save it as custom thumbnail. \n<b>Alternatively: </b><code>/cmd [photo] -s thumb</code> \n<b>Timeout:</b> 60 sec",
+    ],
+    "yt_opt": [
+        "YT-DLP Options is the Custom Quality for the extraction of videos from the yt-dlp supported sites.",
+        'Send YT-DLP Options. Timeout: 60 sec\nFormat: key:value|key:value|key:value.\nExample: format:bv*+mergeall[vcodec=none]|nocheckcertificate:True\nCheck all yt-dlp api options from this <a href="https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L184">FILE</a> to convert cli arguments to api options.',
+    ],
+    "usess": [
+        f'User Session is Telegram Session used to Download Private Contents from Private Channels with no compromise in Privacy, Build with Encryption.\n{"<b>Warning:</b> This Bot is not secured. We recommend asking the group owner to set the Upstream repo to the Official repo. If it is not the official repo, then WZML-X is not responsible for any issues that may occur in your account." if config_dict["UPSTREAM_REPO"] != "https://github.com/weebzone/WZML-X" else "Bot is Secure. You can use the session securely."}',
+        "Send your Session String.\n<b>Timeout:</b> 60 sec",
+    ],
+    "split_size": [
+        "Leech Splits Size is the size to split the Leeched File before uploading",
+        f"Send Leech split size in any comfortable size, like 2Gb, 500MB or 1.46gB. \n<b>PREMIUM ACTIVE:</b> {IS_PREMIUM_USER}. \n<b>Timeout:</b> 60 sec",
+    ],
+    "ddl_servers": [
+        "DDL Servers which uploads your File to their Specific Hosting",
         "",
-        "",
-        "<i>Send your <code>rclone.conf</code> file to use as your Upload Dest to RClone.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "TOKEN_PICKLE": (
-        "",
-        "",
-        "<i>Send your <code>token.pickle</code> to use as your Upload Dest to GDrive</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "LEECH_SPLIT_SIZE": (
-        "",
-        "",
-        f"Send Leech split size in bytes or use gb or mb. Example: 40000000 or 2.5gb or 1000mb. PREMIUM_USER: {TgClient.IS_PREMIUM_USER}.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "LEECH_DUMP_CHAT": (
-        "",
-        "",
-        """Send leech destination ID/USERNAME/PM. 
-* b:id/@username/pm (b: means leech by bot) (id or username of the chat or write pm means private message so bot will send the files in private to you) when you should use b:(leech by bot)? When your default settings is leech by user and you want to leech by bot for specific task.
-* u:id/@username(u: means leech by user) This in case OWNER added USER_STRING_SESSION.
-* h:id/@username(hybrid leech) h: to upload files by bot and user based on file size.
-* id/@username|topic_id(leech in specific chat and topic) add | without space and write topic id after chat id or username.
-┖ <b>Time Left :</b> <code>60 sec</code>""",
-    ),
-    "LEECH_PREFIX": (
-        "",
-        "",
-        "Send Leech Filename Prefix. You can add HTML tags. Example: <code>@mychannel</code>.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "LEECH_SUFFIX": (
-        "",
-        "",
-        "Send Leech Filename Suffix. You can add HTML tags. Example: <code>@mychannel</code>.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "LEECH_CAPTION": (
-        "",
-        "",
-        "Send Leech Caption. You can add HTML tags. Example: <code>@mychannel</code>.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "THUMBNAIL_LAYOUT": (
-        "",
-        "",
-        "Send thumbnail layout (widthxheight, 2x2, 3x3, 2x4, 4x4, ...). Example: 3x3.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "RCLONE_PATH": (
-        "",
-        "",
-        "Send Rclone Path. If you want to use your rclone config edit using owner/user config from usetting or add mrcc: before rclone path. Example mrcc:remote:folder. </i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "RCLONE_FLAGS": (
-        "",
-        "",
-        "key:value|key|key|key:value . Check here all <a href='https://rclone.org/flags/'>RcloneFlags</a>\nEx: --buffer-size:8M|--drive-starred-only",
-    ),
-    "GDRIVE_ID": (
-        "",
-        "",
-        "Send Gdrive ID. If you want to use your token.pickle edit using owner/user token from usetting or add mtp: before the id. Example: mtp:F435RGGRDXXXXXX . </i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "INDEX_URL": (
-        "",
-        "",
-        "Send Index URL for your gdrive option. </i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "UPLOAD_PATHS": (
-        "",
-        "",
-        "Send Dict of keys that have path values. Example: {'path 1': 'remote:rclonefolder', 'path 2': 'gdrive1 id', 'path 3': 'tg chat id', 'path 4': 'mrcc:remote:', 'path 5': b:@username} . </i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "EXCLUDED_EXTENSIONS": (
-        "",
-        "",
-        "Send excluded extensions separated by space without dot at beginning. </i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "NAME_SWAP": (
-        "",
-        "",
-        """<i>Send your Name Swap. You can add pattern instead of normal text according to the format.</i>
-<b>Full Documentation Guide</b> <a href="https://t.me/WZML_X/77">Click Here</a>
-┖ <b>Time Left :</b> <code>60 sec</code>
-""",
-    ),
-    "YT_DLP_OPTIONS": (
-        "",
-        "",
-        """Format: {key: value, key: value, key: value}.
-Example: {"format": "bv*+mergeall[vcodec=none]", "nocheckcertificate": True, "playliststart": 10, "fragment_retries": float("inf"), "matchtitle": "S13", "writesubtitles": True, "live_from_start": True, "postprocessor_args": {"ffmpeg": ["-threads", "4"]}, "wait_for_video": (5, 100), "download_ranges": [{"start_time": 0, "end_time": 10}]}
-Check all yt-dlp api options from this <a href='https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L184'>FILE</a> or use this <a href='https://t.me/mltb_official_channel/177'>script</a> to convert cli arguments to api options.
-
-<i>Send dict of YT-DLP Options according to format.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>""",
-    ),
-    "FFMPEG_CMDS": (
-        "",
-        "",
-        """Dict of list values of ffmpeg commands. You can set multiple ffmpeg commands for all files before upload. Don't write ffmpeg at beginning, start directly with the arguments.
-Examples: {"subtitle": ["-i mltb.mkv -c copy -c:s srt mltb.mkv", "-i mltb.video -c copy -c:s srt mltb"], "convert": ["-i mltb.m4a -c:a libmp3lame -q:a 2 mltb.mp3", "-i mltb.audio -c:a libmp3lame -q:a 2 mltb.mp3"], extract: ["-i mltb -map 0:a -c copy mltb.mka -map 0:s -c copy mltb.srt"]}
-Notes:
-- Add `-del` to the list which you want from the bot to delete the original files after command run complete!
-- To execute one of those lists in bot for example, you must use -ff subtitle (list key) or -ff convert (list key)
-Here I will explain how to use mltb.* which is reference to files you want to work on.
-1. First cmd: the input is mltb.mkv so this cmd will work only on mkv videos and the output is mltb.mkv also so all outputs are mkv. -del will delete the original media after complete run of the cmd.
-2. Second cmd: the input is mltb.video so this cmd will work on all videos and the output is only mltb so the extension is the same as input files.
-3. Third cmd: the input is mltb.m4a so this cmd will work only on m4a audios and the output is mltb.mp3 so the output extension is mp3.
-4. Fourth cmd: the input is mltb.audio so this cmd will work on all audios and the output is mltb.mp3 so the output extension is mp3.
-
-<i>Send dict of FFMPEG_CMDS Options according to format.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>
-""",
-    ),
-    "METADATA_CMDS": (
-        "",
-        "",
-        """<i>Send your Meta data. You can set it according to the format title="Join @WZML_X".</i>
-<b>Full Documentation Guide</b> <a href="https://t.me/WZML_X/">Click Here</a>
-┖ <b>Time Left :</b> <code>60 sec</code>
-""",
-    ),
-    "METADATA": (
-        "🏷 Global Metadata (key=value|key=value)",
-        "Apply metadata to all media files with dynamic variables.",
-        """<i>📝 Send metadata as</i> <code>key=value|key2=value2</code>
-
-<b>🔧 Dynamic Variables:</b>
-• <code>{filename}</code> - Original filename
-• <code>{basename}</code> - Name without extension
-• <code>{audiolang}</code> - Audio language (English/Hindi etc.)
-• <code>{year}</code> - Year from filename
-
-<b>📋 Example:</b>
-<code>title={basename}|artist={audiolang} Version|year={year}</code>
-
-⏱ <b>Time Left:</b> <code>60 sec</code>""",
-    ),
-    "AUDIO_METADATA": (
-        "🎵 Audio Stream Metadata",
-        "Metadata applied to each audio track separately.",
-        """<i>🎧 Audio stream metadata with per-track language support</i>
-
-<b>📋 Example:</b>
-<code>language={audiolang}|title=Audio - {audiolang}</code>
-
-⏱ <b>Time Left:</b> <code>60 sec</code>""",
-    ),
-    "VIDEO_METADATA": (
-        "🎥 Video Stream Metadata",
-        "Metadata applied to video streams.",
-        """<i>📹 Video stream metadata for visual tracks</i>
-
-<b>📋 Example:</b>
-<code>title={basename}|comment=HD Video</code>
-
-⏱ <b>Time Left:</b> <code>60 sec</code>""",
-    ),
-    "SUBTITLE_METADATA": (
-        "💬 Subtitle Stream Metadata",
-        "Metadata applied to each subtitle track separately.",
-        """<i>📄 Subtitle stream metadata with per-track language support</i>
-
-<b>📋 Example:</b>
-<code>language={sublang}|title=Subtitles - {sublang}</code>
-
-⏱ <b>Time Left:</b> <code>60 sec</code>""",
-    ),
-    "YT_DESP": (
-        "String",
-        "Custom description for YouTube uploads. Default is used if not set.",
-        "<i>Send your custom YouTube description.</i> \nTime Left : <code>60 sec</code>",
-    ),
-    "YT_TAGS": (
-        "Comma-separated strings",
-        "Custom tags for YouTube uploads (e.g., tag1,tag2,tag3). Default is used if not set.",
-        "<i>Send your custom YouTube tags as a comma-separated list.</i> \nTime Left : <code>60 sec</code>",
-    ),
-    "YT_CATEGORY_ID": (
-        "Number",
-        "Custom category ID for YouTube uploads. Default is used if not set.",
-        "<i>Send your custom YouTube category ID (e.g., 22).</i> \nTime Left : <code>60 sec</code>",
-    ),
-    "YT_PRIVACY_STATUS": (
-        "public, private, or unlisted",
-        "Custom privacy status for YouTube uploads. Default is used if not set.",
-        "<i>Send your custom YouTube privacy status (public, private, or unlisted).</i> \nTime Left : <code>60 sec</code>",
-    ),
-    "USER_COOKIE_FILE": (
-        "File",
-        "User's YT-DLP Cookie File to authenticate access to websites and youtube.",
-        "<i>Send your cookie file (e.g., cookies.txt or abc.txt).</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "GOFILE_TOKEN": (
-        "String",
-        "Gofile API Token",
-        "<i>Send your Gofile API Token.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "GOFILE_FOLDER_ID": (
-        "String",
-        "Gofile Folder ID",
-        "<i>Send your Gofile Folder ID. If empty, uploads to Root.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "BUZZHEAVIER_TOKEN": (
-        "String",
-        "BuzzHeavier API Token",
-        "<i>Send your BuzzHeavier API Token (Account ID).</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "BUZZHEAVIER_FOLDER_ID": (
-        "String",
-        "BuzzHeavier Folder ID",
-        "<i>Send your BuzzHeavier Folder ID.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "PIXELDRAIN_KEY": (
-        "String",
-        "PixelDrain API Key",
-        "<i>Send your PixelDrain API Key.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "DEVUPLOADS_KEY": (
-        "String",
-        "DevUploads API Key",
-        "<i>Send your DevUploads API Key.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "DEVUPLOADS_FOLDER": (
-        "String",
-        "DevUploads Folder ID",
-        "<i>Send your DevUploads Folder ID. Leave empty to upload to root.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "VIKINGFILE_HASH": (
-        "String",
-        "VikingFile Hash",
-        "<i>Send your VikingFile User Hash.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "VIKINGFILE_FOLDER": (
-        "String",
-        "VikingFile folder name/path. Leave empty to upload to root.",
-        "<i>Send your VikingFile folder name/path. Leave empty to upload to root.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "MEGA_EMAIL": (
-        "String",
-        "Your Mega.nz account email for per-user Mega downloads & uploads.",
-        "<i>Send your Mega.nz email address.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "MEGA_PASSWORD": (
-        "String",
-        "Your Mega.nz account password for per-user Mega downloads & uploads.",
-        "<i>Send your Mega.nz account password.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
-    ),
-    "DRIVE_CAT": (
-        "Dict",
-        'User-defined GDrive categories (name → drive_id). Format: {"name": "drive_id|index_link"}.',
-        '<i>Send dict of user drive categories.\nExample: {"Movies": "0Bxxxxxxxx", "TV": "1Ayyyyyyy|https://index.tv"}\nEach value: drive_id or drive_id|index_link</i> \n┖ <b>Time Left :</b> <code>60 sec</code>',
-    ),
+    ],
+    "user_tds": [
+        f'UserTD helps to Upload files via Bot to your Custom Drive Destination via Global SA mail\n\n➲ <b>SA Mail :</b> {"Not Specified" if "USER_TD_SA" not in config_dict else config_dict["USER_TD_SA"]}',
+        "Send User TD details for Use while Mirror/Clone\n➲ <b>Format:</b>\nname id/link index(optional)\nname2 link2/id2 index(optional)\n\n<b>NOTE:</b>\n<i>1. Drive ID must be valid, then only it will accept\n2. Names can have spaces\n3. All UserTDs are updated on every change\n4. To delete specific UserTD, give Name(s) separated by each line</i>\n\n<b>Timeout:</b> 60 sec",
+    ],
+    "gofile": [
+        "Gofile is a free file sharing and storage platform. You can store and share your content without any limit.",
+        "Send GoFile's API Key. Get it on https://gofile.io/myProfile, It will not be Accepted if the API Key is Invalid !!\n<b>Timeout:</b> 60 sec",
+    ],
+    "streamtape": [
+        "Streamtape is free Video Streaming & sharing Hoster",
+        "Send StreamTape's Login and Key\n<b>Format:</b> <code>user_login:pass_key</code>\n<b>Timeout:</b> 60 sec",
+    ],
+    "lmeta": [
+        "Your Channel Name that will be used while editing metadata of the Video File",
+        "Send Metadata Text for Leeching Files.\n<b>Timeout:</b> 60 Sec.",
+    ],
+    "ffmpeg_cmds": [
+        "Custom FFmpeg Commands to process files before upload. Dict of list values for different profiles.",
+        'Send FFmpeg Commands as JSON Dict.\n<b>Example:</b>\n<code>{"keep_japanese": ["-i mltb.video -map 0:v:0 -map 0:a:m:language:jpn -map 0:s:m:language:eng? -c copy mltb.mkv -del"]}</code>\n\n<b>Notes:</b>\n- <code>mltb.video</code> = all video files, <code>mltb.mkv</code> = output as mkv\n- <code>-del</code> = delete original after processing\n- Use <code>-ff key_name</code> in commands to execute\n<b>Timeout:</b> 60 sec',
+    ],
+    "pbot_token": [
+        "Personal Upload Bot Token to perform uploads on behalf of you.",
+        "Send your Bot Token (from @BotFather).\n<b>Timeout:</b> 60 sec"
+    ],
+    "pdump_chat": [
+        "Personal Upload Dump Chat/Channel ID or Username.",
+        "Send Channel/Chat ID (e.g., -100123456789) or public channel username (e.g., @my_channel).\n<b>Timeout:</b> 60 sec"
+    ],
+}
+fname_dict = {
+    "rcc": "RClone",
+    "lprefix": "Prefix",
+    "lsuffix": "Suffix",
+    "lremname_auto": "AutoRename Template",
+    "lremname_regex": "Regex Remname",
+    "intro_text": "Intro Text",
+    "intro_duration": "Intro Duration",
+    "intro_fontsize": "Intro Font Size",
+    "lmeta": "Metadata",
+    "mprefix": "Prefix",
+    "msuffix": "Suffix",
+    "mremname": "Remname",
+    "ldump": "User Dump",
+    "lcaption": "Caption",
+    "thumb": "Thumbnail",
+    "yt_opt": "YT-DLP Options",
+    "usess": "User Session",
+    "split_size": "Leech Splits",
+    "ddl_servers": "DDL Servers",
+    "user_tds": "User Custom TDs",
+    "gofile": "GoFile",
+    "streamtape": "StreamTape",
+    "ffmpeg_cmds": "FFmpeg Cmds",
+    "pbot_token": "Bot Token",
+    "pdump_chat": "Dump Channel",
 }
 
 
-async def get_user_settings(from_user, stype="main"):
+async def get_user_settings(from_user, key=None, edit_type=None, edit_mode=None):
     user_id = from_user.id
-    user_name = from_user.mention(style="html")
+    name = from_user.mention(style="html")
     buttons = ButtonMaker()
-    rclone_conf = f"rclone/{user_id}.conf"
-    token_pickle = f"tokens/{user_id}.pickle"
+    thumbpath = f"Thumbnails/{user_id}.jpg"
+    rclone_path = f"rclone/{user_id}.conf"
     user_dict = user_data.get(user_id, {})
+    if key is None:
+        buttons.ibutton("Universal Settings", f"userset {user_id} universal")
+        buttons.ibutton("Mirror Settings", f"userset {user_id} mirror")
+        buttons.ibutton("Leech Settings", f"userset {user_id} leech")
+        buttons.ibutton("Personal Upload Bot", f"userset {user_id} personal_bot")
+        if user_dict and any(key in user_dict for key in list(fname_dict.keys())):
+            buttons.ibutton("Reset Setting", f"userset {user_id} reset_all")
+        buttons.ibutton("Close", f"userset {user_id} close")
 
-    if stype == "main":
-        buttons.data_button(
-            "General Settings", f"userset {user_id} general", position="header"
-        )
-        buttons.data_button("Mirror Settings", f"userset {user_id} mirror")
-        buttons.data_button("Leech Settings", f"userset {user_id} leech")
-        buttons.data_button("Uphoster Settings", f"userset {user_id} uphoster")
-        buttons.data_button("FF Media Settings", f"userset {user_id} ffset")
-        buttons.data_button(
-            "Misc Settings", f"userset {user_id} advanced", position="l_body"
+        text = BotTheme(
+            "USER_SETTING",
+            NAME=name,
+            ID=user_id,
+            USERNAME=f"@{from_user.username}",
+            LANG=(
+                Language.get(lc).display_name()
+                if (lc := from_user.language_code)
+                else "N/A"
+            ),
+            DC=from_user.dc_id,
         )
 
-        if user_dict and any(
-            key in user_dict
-            for key in list(user_settings_text.keys())
-            + [
-                "USER_TOKENS",
-                "AS_DOCUMENT",
-                "EQUAL_SPLITS",
-                "MEDIA_GROUP",
-                "STOP_DUPLICATE",
-                "DEFAULT_UPLOAD",
-            ]
-        ):
-            buttons.data_button(
-                "Reset All", f"userset {user_id} confirm_reset_all", position="footer"
+        button = buttons.build_menu(1)
+    elif key == "universal":
+        ytopt = (
+            "Not Exists"
+            if (val := user_dict.get("yt_opt", config_dict.get("YT_DLP_OPTIONS", "")))
+            == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if ytopt != 'Not Exists' else ''} YT-DLP Options",
+            f"userset {user_id} yt_opt",
+        )
+        u_sess = "Exists" if user_dict.get("usess", False) else "Not Exists"
+        buttons.ibutton(
+            f"{'✅️' if u_sess != 'Not Exists' else ''} User Session",
+            f"userset {user_id} usess",
+        )
+        bot_pm = (
+            "Enabled" if user_dict.get("bot_pm", config_dict["BOT_PM"]) else "Disabled"
+        )
+        buttons.ibutton(
+            "Disable Bot PM" if bot_pm == "Enabled" else "Enable Bot PM",
+            f"userset {user_id} bot_pm",
+        )
+        if config_dict["BOT_PM"]:
+            bot_pm = "Force Enabled"
+        mediainfo = (
+            "Enabled"
+            if user_dict.get("mediainfo", config_dict["SHOW_MEDIAINFO"])
+            else "Disabled"
+        )
+        buttons.ibutton(
+            "Disable MediaInfo" if mediainfo == "Enabled" else "Enable MediaInfo",
+            f"userset {user_id} mediainfo",
+        )
+        if config_dict["SHOW_MEDIAINFO"]:
+            mediainfo = "Force Enabled"
+        save_mode = "Save As Dump" if user_dict.get("save_mode") else "Save As BotPM"
+        buttons.ibutton(
+            "Save As BotPM" if save_mode == "Save As Dump" else "Save As Dump",
+            f"userset {user_id} save_mode",
+        )
+        dailytl = config_dict["DAILY_TASK_LIMIT"] or "∞"
+        dailytas = (
+            user_dict.get("dly_tasks")[1]
+            if user_dict
+            and user_dict.get("dly_tasks")
+            and user_id != OWNER_ID
+            and config_dict["DAILY_TASK_LIMIT"]
+            else config_dict["DAILY_TASK_LIMIT"] or "️∞" if user_id != OWNER_ID else "∞"
+        )
+        if user_dict.get("dly_tasks", False):
+            t = str(datetime.now() - user_dict["dly_tasks"][0]).split(":")
+            lastused = f"{t[0]}h {t[1]}m {t[2].split('.')[0]}s ago"
+        else:
+            lastused = "Bot Not Used yet.."
+
+        text = BotTheme(
+            "UNIVERSAL",
+            NAME=name,
+            YT=escape(ytopt),
+            DT=f"{dailytas} / {dailytl}",
+            LAST_USED=lastused,
+            BOT_PM=bot_pm,
+            MEDIAINFO=mediainfo,
+            SAVE_MODE=save_mode,
+            USESS=u_sess,
+        )
+        buttons.ibutton("Back", f"userset {user_id} back", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        button = buttons.build_menu(2)
+    elif key == "mirror":
+        buttons.ibutton("RClone", f"userset {user_id} rcc")
+        rccmsg = "Exists" if await aiopath.exists(rclone_path) else "Not Exists"
+        dailytlup = (
+            get_readable_file_size(config_dict["DAILY_MIRROR_LIMIT"] * 1024**3)
+            if config_dict["DAILY_MIRROR_LIMIT"]
+            else "∞"
+        )
+        dailyup = (
+            get_readable_file_size(await getdailytasks(user_id, check_mirror=True))
+            if config_dict["DAILY_MIRROR_LIMIT"] and user_id != OWNER_ID
+            else "️∞"
+        )
+        buttons.ibutton("Mirror Prefix", f"userset {user_id} mprefix")
+        mprefix = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "mprefix", config_dict.get("MIRROR_FILENAME_PREFIX", "")
+                )
             )
-        buttons.data_button(
-            "Close",
-            f"userset {user_id} close",
-            position="footer",
-            style=ButtonStyle.DANGER,
+            == ""
+            else val
         )
 
-        text = f"""⌬ <b>User Settings :</b>
-│
-┟ <b>Name</b> → {user_name}
-┠ <b>UserID</b> → #ID{user_id}
-┠ <b>Username</b> → @{from_user.username}
-┠ <b>Telegram DC</b> → {from_user.dc_id}
-┖ <b>Telegram Lang</b> → {Language.get(lc).display_name() if (lc := from_user.language_code) else "N/A"}"""
-
-        btns = buttons.build_menu(2)
-
-    elif stype == "general":
-        if user_dict.get("DEFAULT_UPLOAD", ""):
-            default_upload = user_dict["DEFAULT_UPLOAD"]
-        elif "DEFAULT_UPLOAD" not in user_dict:
-            default_upload = Config.DEFAULT_UPLOAD
-        du = "GDRIVE API" if default_upload == "gd" else "RCLONE"
-        dur = "GDRIVE API" if default_upload != "gd" else "RCLONE"
-        buttons.data_button(
-            f"Swap to {dur} Mode", f"userset {user_id} {default_upload}"
+        buttons.ibutton("Mirror Suffix", f"userset {user_id} msuffix")
+        msuffix = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "msuffix", config_dict.get("MIRROR_FILENAME_SUFFIX", "")
+                )
+            )
+            == ""
+            else val
         )
 
-        user_tokens = user_dict.get("USER_TOKENS", False)
-        tr = "USER" if user_tokens else "OWNER"
-        trr = "OWNER" if user_tokens else "USER"
-        buttons.data_button(
-            f"Swap to {trr} token/config",
-            f"userset {user_id} tog USER_TOKENS {'f' if user_tokens else 't'}",
+        buttons.ibutton("Mirror Remname", f"userset {user_id} mremname")
+        mremname = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "mremname", config_dict.get("MIRROR_FILENAME_REMNAME", "")
+                )
+            )
+            == ""
+            else val
         )
 
-        buttons.data_button("Back", f"userset {user_id} back", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
+        ddl_serv = len(val) if (val := user_dict.get("ddl_servers", False)) else 0
+        buttons.ibutton("DDL Servers", f"userset {user_id} ddl_servers")
+
+        tds_mode = "Enabled" if user_dict.get("td_mode", False) else "Disabled"
+        if not config_dict["USER_TD_MODE"]:
+            tds_mode = "Force Disabled"
+
+        user_tds = len(val) if (val := user_dict.get("user_tds", False)) else 0
+        buttons.ibutton("User TDs", f"userset {user_id} user_tds")
+
+        text = BotTheme(
+            "MIRROR",
+            NAME=name,
+            RCLONE=rccmsg,
+            DDL_SERVER=ddl_serv,
+            DM=f"{dailyup} / {dailytlup}",
+            MREMNAME=escape(mremname),
+            MPREFIX=escape(mprefix),
+            MSUFFIX=escape(msuffix),
+            TMODE=tds_mode,
+            USERTD=user_tds,
         )
 
-        def_cookies = user_dict.get("USE_DEFAULT_COOKIE", False)
-        cookie_mode = "Owner's Cookie" if def_cookies else "User's Cookie"
-        buttons.data_button(
-            f"Swap to {'OWNER' if not def_cookies else 'USER'}'s Cookie File",
-            f"userset {user_id} tog USE_DEFAULT_COOKIE {'f' if def_cookies else 't'}",
-        )
-        btns = buttons.build_menu(2)
-
-        text = f"""⌬ <b>General Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>Default Upload Package</b> → <b>{du}</b>
-┠ <b>Default Usage Mode</b> → <b>{tr}'s</b> token/config
-┖ <b>YT Cookies Mode</b> → <b>{cookie_mode}</b>
-"""
-
-    elif stype == "leech":
-        thumbpath = f"thumbnails/{user_id}.jpg"
-        buttons.data_button("Thumbnail", f"userset {user_id} menu THUMBNAIL")
-        thumbmsg = "Exists" if await aiopath.exists(thumbpath) else "Not Exists"
-        buttons.data_button(
-            "Leech Split Size", f"userset {user_id} menu LEECH_SPLIT_SIZE"
-        )
-        if user_dict.get("LEECH_SPLIT_SIZE", False):
-            split_size = user_dict["LEECH_SPLIT_SIZE"]
-        else:
-            split_size = Config.LEECH_SPLIT_SIZE
-        buttons.data_button(
-            "Leech Destination", f"userset {user_id} menu LEECH_DUMP_CHAT"
-        )
-        if user_dict.get("LEECH_DUMP_CHAT", False):
-            leech_dest = user_dict["LEECH_DUMP_CHAT"]
-        elif "LEECH_DUMP_CHAT" not in user_dict and Config.LEECH_DUMP_CHAT:
-            leech_dest = Config.LEECH_DUMP_CHAT
-        else:
-            leech_dest = "None"
-        buttons.data_button("Leech Prefix", f"userset {user_id} menu LEECH_PREFIX")
-        if user_dict.get("LEECH_PREFIX", False):
-            lprefix = user_dict["LEECH_PREFIX"]
-        elif "LEECH_PREFIX" not in user_dict and Config.LEECH_PREFIX:
-            lprefix = Config.LEECH_PREFIX
-        else:
-            lprefix = "Not Exists"
-        buttons.data_button("Leech Suffix", f"userset {user_id} menu LEECH_SUFFIX")
-        if user_dict.get("LEECH_SUFFIX", False):
-            lsuffix = user_dict["LEECH_SUFFIX"]
-        elif "LEECH_SUFFIX" not in user_dict and Config.LEECH_SUFFIX:
-            lsuffix = Config.LEECH_SUFFIX
-        else:
-            lsuffix = "Not Exists"
-
-        buttons.data_button("Leech Caption", f"userset {user_id} menu LEECH_CAPTION")
-        if user_dict.get("LEECH_CAPTION", False):
-            lcap = user_dict["LEECH_CAPTION"]
-        elif "LEECH_CAPTION" not in user_dict and Config.LEECH_CAPTION:
-            lcap = Config.LEECH_CAPTION
-        else:
-            lcap = "Not Exists"
-
+        buttons.ibutton("Back", f"userset {user_id} back", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        button = buttons.build_menu(2)
+    elif key == "leech":
         if (
-            user_dict.get("AS_DOCUMENT", False)
-            or "AS_DOCUMENT" not in user_dict
-            and Config.AS_DOCUMENT
+            user_dict.get("as_doc", False)
+            or "as_doc" not in user_dict
+            and config_dict["AS_DOCUMENT"]
         ):
             ltype = "DOCUMENT"
-            buttons.data_button("Send As Media", f"userset {user_id} tog AS_DOCUMENT f")
+            buttons.ibutton("Send As Media", f"userset {user_id} doc")
         else:
             ltype = "MEDIA"
-            buttons.data_button(
-                "Send As Document", f"userset {user_id} tog AS_DOCUMENT t"
-            )
-        if (
-            user_dict.get("EQUAL_SPLITS", False)
-            or "EQUAL_SPLITS" not in user_dict
-            and Config.EQUAL_SPLITS
-        ):
-            buttons.data_button(
-                "Disable Equal Splits", f"userset {user_id} tog EQUAL_SPLITS f"
-            )
-            equal_splits = "Enabled"
-        else:
-            buttons.data_button(
-                "Enable Equal Splits", f"userset {user_id} tog EQUAL_SPLITS t"
-            )
-            equal_splits = "Disabled"
-        if (
-            user_dict.get("MEDIA_GROUP", False)
-            or "MEDIA_GROUP" not in user_dict
-            and Config.MEDIA_GROUP
-        ):
-            buttons.data_button(
-                "Disable Media Group", f"userset {user_id} tog MEDIA_GROUP f"
-            )
-            media_group = "Enabled"
-        else:
-            buttons.data_button(
-                "Enable Media Group", f"userset {user_id} tog MEDIA_GROUP t"
-            )
-            media_group = "Disabled"
-        buttons.data_button(
-            "Thumbnail Layout", f"userset {user_id} menu THUMBNAIL_LAYOUT"
+            buttons.ibutton("Send As Document", f"userset {user_id} doc")
+
+        dailytlle = (
+            get_readable_file_size(config_dict["DAILY_LEECH_LIMIT"] * 1024**3)
+            if config_dict["DAILY_LEECH_LIMIT"]
+            else "️∞"
         )
-        if user_dict.get("THUMBNAIL_LAYOUT", False):
-            thumb_layout = user_dict["THUMBNAIL_LAYOUT"]
-        elif "THUMBNAIL_LAYOUT" not in user_dict and Config.THUMBNAIL_LAYOUT:
-            thumb_layout = Config.THUMBNAIL_LAYOUT
-        else:
-            thumb_layout = "None"
-
-        buttons.data_button("Back", f"userset {user_id} back", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(2)
-
-        text = f"""⌬ <b>Leech Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ Leech Type → <b>{ltype}</b>
-┠ Leech Thumbnail → <b>{thumbmsg}</b>
-┠ Leech Split Size → <b>{get_readable_file_size(split_size)}</b>
-┠ Equal Splits → <b>{equal_splits}</b>
-┠ Media Group → <b>{media_group}</b>
-┠ Leech Prefix → <code>{escape(lprefix)}</code>
-┠ Leech Suffix → <code>{escape(lsuffix)}</code>
-┠ Leech Caption → <code>{escape(lcap)}</code>
-┠ Leech Destination → <code>{leech_dest}</code>
-┖ Thumbnail Layout → <b>{thumb_layout}</b>
-"""
-
-    elif stype == "uphoster":
-        uphoster_service = user_dict.get("UPHOSTER_SERVICE", "gofile")
-        buttons.data_button(
-            "Change Destination ⇋", f"userset {user_id} uphoster_destinations", "header"
-        )
-        buttons.data_button("Gofile Tools", f"userset {user_id} gofile")
-        buttons.data_button("BuzzHeavier Tools", f"userset {user_id} buzzheavier")
-        buttons.data_button("PixelDrain Tools", f"userset {user_id} pixeldrain")
-        buttons.data_button("DevUploads Tools", f"userset {user_id} devuploads")
-        buttons.data_button("VikingFile Tools", f"userset {user_id} vikingfile")
-        buttons.data_button("Back", f"userset {user_id} back", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(2)
-
-        destinations = [s.capitalize() for s in uphoster_service.split(",")]
-        text = f"""⌬ <b>Uphoster Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┖ <b>Current Destination</b> → {", ".join(destinations)}"""
-
-    elif stype == "pixeldrain":
-        buttons.data_button("PixelDrain Key", f"userset {user_id} menu PIXELDRAIN_KEY")
-        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(1)
-
-        if user_dict.get("PIXELDRAIN_KEY", False):
-            pdtoken = user_dict["PIXELDRAIN_KEY"]
-        elif Config.PIXELDRAIN_KEY:
-            pdtoken = Config.PIXELDRAIN_KEY
-        else:
-            pdtoken = "None"
-
-        text = f"""⌬ <b>PixelDrain Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┖ <b>PixelDrain Key</b> → <code>{pdtoken}</code>"""
-
-    elif stype == "buzzheavier":
-        buttons.data_button(
-            "BuzzHeavier Token", f"userset {user_id} menu BUZZHEAVIER_TOKEN"
-        )
-        buttons.data_button(
-            "BuzzHeavier Folder ID", f"userset {user_id} menu BUZZHEAVIER_FOLDER_ID"
-        )
-        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(1)
-
-        if user_dict.get("BUZZHEAVIER_TOKEN", False):
-            bztoken = user_dict["BUZZHEAVIER_TOKEN"]
-        elif Config.BUZZHEAVIER_API:
-            bztoken = Config.BUZZHEAVIER_API
-        else:
-            bztoken = "None"
-
-        if user_dict.get("BUZZHEAVIER_FOLDER_ID", False):
-            bzfolder = user_dict["BUZZHEAVIER_FOLDER_ID"]
-        else:
-            bzfolder = "None"
-
-        text = f"""⌬ <b>BuzzHeavier Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>BuzzHeavier Token</b> → <code>{bztoken}</code>
-┖ <b>BuzzHeavier Folder ID</b> → <code>{bzfolder}</code>"""
-
-    elif stype == "devuploads":
-        buttons.data_button(
-            "DevUploads API Key", f"userset {user_id} menu DEVUPLOADS_KEY"
-        )
-        buttons.data_button(
-            "DevUploads Folder ID", f"userset {user_id} menu DEVUPLOADS_FOLDER"
-        )
-        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(1)
-
-        dukey = user_dict.get("DEVUPLOADS_KEY") or Config.DEVUPLOADS_KEY or "None"
-        dufolder = (
-            user_dict.get("DEVUPLOADS_FOLDER")
-            or Config.DEVUPLOADS_FOLDER
-            or "None (Root)"
-        )
-        text = f"""⌬ <b>DevUploads Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>DevUploads Key</b> → <code>{dukey}</code>
-┖ <b>DevUploads Folder ID</b> → <code>{dufolder}</code>"""
-
-    elif stype == "vikingfile":
-        buttons.data_button(
-            "VikingFile Hash", f"userset {user_id} menu VIKINGFILE_HASH"
-        )
-        buttons.data_button(
-            "VikingFile Folder", f"userset {user_id} menu VIKINGFILE_FOLDER"
-        )
-        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(1)
-
-        vfkey = user_dict.get("VIKINGFILE_HASH") or Config.VIKINGFILE_HASH or "None"
-        vffolder = (
-            user_dict.get("VIKINGFILE_FOLDER")
-            or Config.VIKINGFILE_FOLDER
-            or "None (Root)"
-        )
-        text = f"""⌬ <b>VikingFile Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>VikingFile Hash</b> → <code>{vfkey}</code>
-┖ <b>VikingFile Folder</b> → <code>{vffolder}</code>"""
-
-    elif stype == "gofile":
-        buttons.data_button("Gofile Token", f"userset {user_id} menu GOFILE_TOKEN")
-        buttons.data_button(
-            "Gofile Folder ID", f"userset {user_id} menu GOFILE_FOLDER_ID"
-        )
-        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(1)
-
-        if user_dict.get("GOFILE_TOKEN", False):
-            gftoken = user_dict["GOFILE_TOKEN"]
-        elif Config.GOFILE_API:
-            gftoken = Config.GOFILE_API
-        else:
-            gftoken = "None"
-
-        if user_dict.get("GOFILE_FOLDER_ID", False):
-            gffolder = user_dict["GOFILE_FOLDER_ID"]
-        elif Config.GOFILE_FOLDER_ID:
-            gffolder = Config.GOFILE_FOLDER_ID
-        else:
-            gffolder = "None (Uploads to Root)"
-
-        text = f"""⌬ <b>Gofile Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>Gofile Token</b> → <code>{gftoken}</code>
-┖ <b>Gofile Folder ID</b> → <code>{gffolder}</code>"""
-
-    elif stype == "rclone":
-        buttons.data_button("Rclone Config", f"userset {user_id} menu RCLONE_CONFIG")
-        buttons.data_button(
-            "Default Rclone Path", f"userset {user_id} menu RCLONE_PATH"
-        )
-        buttons.data_button("Rclone Flags", f"userset {user_id} menu RCLONE_FLAGS")
-
-        buttons.data_button("Back", f"userset {user_id} back mirror", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
+        dailyll = (
+            get_readable_file_size(await getdailytasks(user_id, check_leech=True))
+            if config_dict["DAILY_LEECH_LIMIT"] and user_id != OWNER_ID
+            else "∞"
         )
 
-        rccmsg = "Exists" if await aiopath.exists(rclone_conf) else "Not Exists"
-        if user_dict.get("RCLONE_PATH", False):
-            rccpath = user_dict["RCLONE_PATH"]
-        elif Config.RCLONE_PATH:
-            rccpath = Config.RCLONE_PATH
-        else:
-            rccpath = "None"
-        btns = buttons.build_menu(2)
-
-        if user_dict.get("RCLONE_FLAGS", False):
-            rcflags = user_dict["RCLONE_FLAGS"]
-        elif "RCLONE_FLAGS" not in user_dict and Config.RCLONE_FLAGS:
-            rcflags = Config.RCLONE_FLAGS
-        else:
-            rcflags = "None"
-
-        text = f"""⌬ <b>RClone Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>Rclone Config</b> → <b>{rccmsg}</b>
-┠ <b>Rclone Flags</b> → <code>{rcflags}</code>
-┖ <b>Rclone Path</b> → <code>{rccpath}</code>"""
-
-    elif stype == "gdrive":
-        buttons.data_button("Default Gdrive ID", f"userset {user_id} menu GDRIVE_ID")
-        buttons.data_button("Default Index URL", f"userset {user_id} menu INDEX_URL")
-        buttons.data_button("Token.pickle", f"userset {user_id} menu TOKEN_PICKLE")
-        if (
-            user_dict.get("STOP_DUPLICATE", False)
-            or "STOP_DUPLICATE" not in user_dict
-            and Config.STOP_DUPLICATE
-        ):
-            buttons.data_button(
-                "Disable Stop Duplicate", f"userset {user_id} tog STOP_DUPLICATE f"
-            )
-            sd_msg = "Enabled"
-        else:
-            buttons.data_button(
-                "Enable Stop Duplicate",
-                f"userset {user_id} tog STOP_DUPLICATE t",
-                "l_body",
-            )
-            sd_msg = "Disabled"
-        buttons.data_button(
-            "User Drive Categories", f"userset {user_id} menu DRIVE_CAT", "header"
-        )
-        buttons.data_button("Back", f"userset {user_id} back mirror", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
+        thumbmsg = "Exists" if await aiopath.exists(thumbpath) else "Not Exists"
+        buttons.ibutton(
+            f"{'✅️' if thumbmsg == 'Exists' else ''} Thumbnail",
+            f"userset {user_id} thumb",
         )
 
-        tokenmsg = "Exists" if await aiopath.exists(token_pickle) else "Not Exists"
-        if user_dict.get("GDRIVE_ID", False):
-            gdrive_id = user_dict["GDRIVE_ID"]
-        elif GDID := Config.GDRIVE_ID:
-            gdrive_id = GDID
-        else:
-            gdrive_id = "None"
-        index = user_dict["INDEX_URL"] if user_dict.get("INDEX_URL", False) else "None"
-        upload_sa = user_dict.get("DRIVE_CATEGORY_SA") or Config.DRIVE_CATEGORY_SA
-        sa_display = escape(upload_sa) if upload_sa else "Not Set"
-        dc_status = "Enabled" if user_dict.get("drive_cat_mode", False) else "Disabled"
-        if not Config.DRIVE_CATEGORY_MODE:
-            dc_status = "Force Disabled (Global)"
-        drive_cat_val = user_dict.get("DRIVE_CAT")
-        lines = []
-        default_ilink_part = (
-            f" | <code>{escape(index)}</code>" if index != "None" else ""
+        split_size = (
+            get_readable_file_size(config_dict["LEECH_SPLIT_SIZE"]) + " (Default)"
+            if user_dict.get("split_size", "") == ""
+            else get_readable_file_size(user_dict["split_size"])
         )
-        lines.append(
-            f"  <b>Default</b>: <code>{escape(gdrive_id)}</code>{default_ilink_part}"
+        equal_splits = (
+            "Enabled"
+            if user_dict.get("equal_splits", config_dict.get("EQUAL_SPLITS"))
+            else "Disabled"
         )
-        if drive_cat_val:
-            for k, v in drive_cat_val.items():
-                did = v.get("drive_id", "")
-                ilink = v.get("index_link", "")
-                ilink_part = f" | <code>{escape(ilink)}</code>" if ilink else ""
-                lines.append(
-                    f"  <b>{escape(k)}</b>: <code>{escape(did)}</code>{ilink_part}"
+        media_group = (
+            "Enabled"
+            if user_dict.get("media_group", config_dict.get("MEDIA_GROUP"))
+            else "Disabled"
+        )
+        buttons.ibutton(
+            f"{'✅️' if user_dict.get('split_size') else ''} Leech Splits",
+            f"userset {user_id} split_size",
+        )
+
+        lcaption = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "lcaption", config_dict.get("LEECH_FILENAME_CAPTION", "")
                 )
-        drive_cat_display = "\n   ".join(lines)
-        btns = buttons.build_menu(2)
+            )
+            == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if lcaption != 'Not Exists' else ''} Leech Caption",
+            f"userset {user_id} lcaption",
+        )
 
-        text = f"""⌬ <b>GDrive Tools Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>Gdrive ID</b> → <code>{gdrive_id}</code> <i>(Default)</i>
-┠ <b>Index URL</b> → <code>{index}</code> <i>(Default)</i>
-┠ <b>Stop Duplicate</b> → <b>{sd_msg}</b>
-┠ <b>GDrive token.pickle</b> → <b>{tokenmsg}</b>
-┠ <b>Drive Upload SA</b> → <code>{sa_display}</code>
-┠ <b>Drive Category</b> → <b>{dc_status}</b>
-┖ <b>Drive Categories:</b> 
-   {drive_cat_display}"""
-    elif stype == "mirror":
-        buttons.data_button("RClone Tools", f"userset {user_id} rclone")
-        rccmsg = "Exists" if await aiopath.exists(rclone_conf) else "Not Exists"
-        if user_dict.get("RCLONE_PATH", False):
-            rccpath = user_dict["RCLONE_PATH"]
-        elif RP := Config.RCLONE_PATH:
-            rccpath = RP
+        lprefix = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "lprefix", config_dict.get("LEECH_FILENAME_PREFIX", "")
+                )
+            )
+            == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if lprefix != 'Not Exists' else ''} Leech Prefix",
+            f"userset {user_id} lprefix",
+        )
+
+        lsuffix = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "lsuffix", config_dict.get("LEECH_FILENAME_SUFFIX", "")
+                )
+            )
+            == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if lsuffix != 'Not Exists' else ''} Leech Suffix",
+            f"userset {user_id} lsuffix",
+        )
+
+        # AutoRename Template (template-based)
+        lremname_auto = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "lremname_auto", config_dict.get("LEECH_FILENAME_REMNAME_AUTO", "")
+                )
+            )
+            == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if lremname_auto != 'Not Exists' else ''} AutoRename Template",
+            f"userset {user_id} lremname_auto",
+        )
+
+        # Regex Remname (regex-based)
+        lremname_regex = (
+            "Not Exists"
+            if (
+                val := user_dict.get(
+                    "lremname_regex", config_dict.get("LEECH_FILENAME_REMNAME_REGEX", "")
+                )
+            )
+            == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if lremname_regex != 'Not Exists' else ''} Regex Remname",
+            f"userset {user_id} lremname_regex",
+        )
+
+        # Rename Method toggle (only show if both exist)
+        if lremname_auto != "Not Exists" and lremname_regex != "Not Exists":
+            rename_method = user_dict.get("rename_method", "auto")
+            buttons.ibutton(
+                f"Method: {'Auto Rename' if rename_method == 'auto' else 'Regex'}",
+                f"userset {user_id} rename_method",
+            )
+
+        # AutoRename toggle
+        autorename_enabled = user_dict.get("autorename", True)  # Default: enabled
+        buttons.ibutton(
+            "Disable AutoRename" if autorename_enabled else "Enable AutoRename",
+            f"userset {user_id} autorename",
+        )
+
+        # Auto Thumbnail toggle
+        auto_thumb = user_dict.get("auto_thumb", config_dict.get("AUTO_THUMBNAIL", False))
+        buttons.ibutton(
+            "Disable Auto Thumbnail" if auto_thumb else "Enable Auto Thumbnail",
+            f"userset {user_id} auto_thumb",
+        )
+
+        buttons.ibutton("Leech Dump", f"userset {user_id} ldump")
+        ldump = "Not Exists" if (val := user_dict.get("ldump", "")) == "" else len(val)
+
+        lmeta = (
+            "Not Exists"
+            if (val := user_dict.get("lmeta", config_dict.get("METADATA", ""))) == ""
+            else val
+        )
+        buttons.ibutton(
+            f"{'✅️' if lmeta != 'Not Exists' else ''} Metadata",
+            f"userset {user_id} lmeta",
+        )
+        
+        # Intro Subtitle button
+        intro_subtitle = user_dict.get("intro_subtitle", {})
+        has_intro = intro_subtitle.get("text", "") != ""
+        intro_enabled = intro_subtitle.get("enabled", True) if has_intro else False
+        buttons.ibutton(
+            f"{'✅️' if has_intro and intro_enabled else '❌' if has_intro else ''} 📝 Intro Subtitle",
+            f"userset {user_id} intro_subtitle",
+        )
+
+        # FFmpeg Commands button
+        ffmpeg_cmds = user_dict.get("ffmpeg_cmds", {})
+        ffmpeg_status = "Not Set"
+        if ffmpeg_cmds:
+            ffmpeg_status = ", ".join(ffmpeg_cmds.keys())
+        buttons.ibutton(
+            f"{'✅️' if ffmpeg_cmds else ''} 🎬 FFmpeg Cmds",
+            f"userset {user_id} ffmpeg_cmds",
+        )
+
+        text = BotTheme(
+            "LEECH",
+            NAME=name,
+            DL=f"{dailyll} / {dailytlle}",
+            LTYPE=ltype,
+            THUMB=thumbmsg,
+            SPLIT_SIZE=split_size,
+            EQUAL_SPLIT=equal_splits,
+            MEDIA_GROUP=media_group,
+            LCAPTION=escape(lcaption),
+            LPREFIX=escape(lprefix),
+            LSUFFIX=escape(lsuffix),
+            LDUMP=ldump,
+            LREMNAME_AUTO=escape(lremname_auto),
+            LREMNAME_REGEX=escape(lremname_regex),
+            RENAME_METHOD="Auto Rename" if user_dict.get("rename_method", "auto") == "auto" else "Regex",
+            LMETA=escape(lmeta),
+            AUTORENAME="Enabled" if autorename_enabled else "Disabled",
+            AUTO_THUMB="Enabled" if auto_thumb else "Disabled",
+        )
+
+        buttons.ibutton("Back", f"userset {user_id} back", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        button = buttons.build_menu(2)
+    elif key == "personal_bot":
+        pbot_token = user_dict.get("personal_bot_token", "")
+        pbot_username = user_dict.get("personal_bot_username", "None")
+        pbot_enabled = "Enabled" if user_dict.get("personal_bot_enabled", False) else "Disabled"
+        
+        pdump_chat = user_dict.get("personal_dump_chat_id", "")
+        pdump_enabled = "Enabled" if user_dict.get("personal_dump_enabled", False) else "Disabled"
+        pdump_verified = "Verified" if user_dict.get("personal_dump_verified", False) else "Not Verified"
+
+        text = (
+            f"㊂ <b><u>Personal Upload Bot Settings :</u></b>\n\n"
+            f"┎ <b>Bot Token:</b> <code>{'Connected' if pbot_token else 'Not Connected'}</code>\n"
+            f"┠ <b>Bot Username:</b> {'@' + pbot_username if pbot_username != 'None' else 'None'}\n"
+            f"┠ <b>Bot Status:</b> <code>{pbot_enabled}</code>\n"
+            f"┠ <b>Dump Channel:</b> <code>{pdump_chat or 'Not Configured'}</code>\n"
+            f"┠ <b>Dump Status:</b> <code>{pdump_enabled}</code>\n"
+            f"┖ <b>Dump Permissions:</b> <code>{pdump_verified}</code>\n\n"
+            f"➲ <b>Description:</b> <i>Use your own Telegram bot for uploading leech files to offload the main bot and avoid FloodWaits.</i>"
+        )
+        
+        if pbot_token:
+            buttons.ibutton("Disable Bot" if user_dict.get("personal_bot_enabled", False) else "Enable Bot", f"userset {user_id} toggle_pbot")
+            buttons.ibutton("Change Bot Token", f"userset {user_id} pbot_token edit")
+            buttons.ibutton("Remove Bot Token", f"userset {user_id} rm_pbot")
         else:
-            rccpath = "None"
-
-        buttons.data_button("GDrive Tools", f"userset {user_id} gdrive")
-        tokenmsg = "Exists" if await aiopath.exists(token_pickle) else "Not Exists"
-        if user_dict.get("GDRIVE_ID", False):
-            gdrive_id = user_dict["GDRIVE_ID"]
-        elif GI := Config.GDRIVE_ID:
-            gdrive_id = GI
+            buttons.ibutton("Connect Bot Token", f"userset {user_id} pbot_token edit")
+            
+        if pdump_chat:
+            buttons.ibutton("Disable Dump" if user_dict.get("personal_dump_enabled", False) else "Enable Dump", f"userset {user_id} toggle_pdump")
+            buttons.ibutton("Change Dump Channel", f"userset {user_id} pdump_chat edit")
+            buttons.ibutton("Remove Dump Channel", f"userset {user_id} rm_pdump")
         else:
-            gdrive_id = "None"
+            buttons.ibutton("Configure Dump Channel", f"userset {user_id} pdump_chat edit")
 
-        index = user_dict["INDEX_URL"] if user_dict.get("INDEX_URL", False) else "None"
-        if (
-            user_dict.get("STOP_DUPLICATE", False)
-            or "STOP_DUPLICATE" not in user_dict
-            and Config.STOP_DUPLICATE
-        ):
-            sd_msg = "Enabled"
-        else:
-            sd_msg = "Disabled"
+        if pbot_token and pdump_chat:
+            buttons.ibutton("Verify Permissions", f"userset {user_id} verify_pbot")
 
-        buttons.data_button("YT Up Tools", f"userset {user_id} yttools")
-        buttons.data_button("Mega Tools", f"userset {user_id} mega")
-        if Config.DRIVE_CATEGORY_MODE:
-            dc_enabled = user_dict.get("drive_cat_mode", False)
-            buttons.data_button(
-                f"Drive Categories: {'ON' if dc_enabled else 'OFF'}",
-                f"userset {user_id} tog drive_cat_mode {'f' if dc_enabled else 't'}",
+        buttons.ibutton("Back", f"userset {user_id} back", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        button = buttons.build_menu(2)
+    elif key == "ddl_servers":
+        ddl_serv, serv_list = 0, []
+        if ddl_dict := user_dict.get("ddl_servers", False):
+            for serv, (enabled, _) in ddl_dict.items():
+                if enabled:
+                    serv_list.append(serv)
+                    ddl_serv += 1
+        text = (
+            f"㊂ <b><u>{fname_dict[key]} Settings :</u></b>\n\n"
+            f"➲ <b>Enabled DDL Server(s) :</b> <i>{ddl_serv}</i>\n\n"
+            f"➲ <b>Description :</b> <i>{desp_dict[key][0]}</i>"
+        )
+        for btn in ["gofile", "streamtape"]:
+            buttons.ibutton(
+                f"{'✅️' if btn in serv_list else ''} {fname_dict[btn]}",
+                f"userset {user_id} {btn}",
+            )
+        buttons.ibutton("Back", f"userset {user_id} back mirror", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        button = buttons.build_menu(2)
+    elif edit_type:
+        text = f"㊂ <b><u>{fname_dict[key]} Settings :</u></b>\n\n"
+        if key == "rcc":
+            set_exist = await aiopath.exists(rclone_path)
+            text += f"➲ <b>RClone.Conf File :</b> <i>{'' if set_exist else 'Not'} Exists</i>\n\n"
+        elif key == "thumb":
+            set_exist = await aiopath.exists(thumbpath)
+            text += f"➲ <b>Custom Thumbnail :</b> <i>{'' if set_exist else 'Not'} Exists</i>\n\n"
+        elif key == "yt_opt":
+            set_exist = (
+                "Not Exists"
+                if (
+                    val := user_dict.get(
+                        "yt_opt", config_dict.get("YT_DLP_OPTIONS", "")
+                    )
+                )
+                == ""
+                else val
+            )
+            text += f"➲ <b>YT-DLP Options :</b> <code>{escape(set_exist)}</code>\n\n"
+        elif key == "usess":
+            set_exist = "Exists" if user_dict.get("usess") else "Not Exists"
+            text += f"➲ <b>{fname_dict[key]} :</b> <code>{set_exist}</code>\n➲ <b>Encryption :</b> {'🔐' if set_exist else '🔓'}\n\n"
+        elif key == "split_size":
+            set_exist = (
+                get_readable_file_size(config_dict["LEECH_SPLIT_SIZE"]) + " (Default)"
+                if user_dict.get("split_size", "") == ""
+                else get_readable_file_size(user_dict["split_size"])
+            )
+            text += f"➲ <b>Leech Split Size :</b> <i>{set_exist}</i>\n\n"
+            if user_dict.get("equal_splits", False) or (
+                "equal_splits" not in user_dict and config_dict["EQUAL_SPLITS"]
+            ):
+                buttons.ibutton(
+                    "Disable Equal Splits", f"userset {user_id} esplits", "header"
+                )
+            else:
+                buttons.ibutton(
+                    "Enable Equal Splits", f"userset {user_id} esplits", "header"
+                )
+            if user_dict.get("media_group", False) or (
+                "media_group" not in user_dict and config_dict["MEDIA_GROUP"]
+            ):
+                buttons.ibutton(
+                    "Disable Media Group", f"userset {user_id} mgroup", "header"
+                )
+            else:
+                buttons.ibutton(
+                    "Enable Media Group", f"userset {user_id} mgroup", "header"
+                )
+        elif key in ["pbot_token", "pdump_chat"]:
+            if key == "pbot_token":
+                val = user_dict.get("personal_bot_token", "")
+                set_exist = "Connected" if val else "Not Connected"
+            else:
+                val = user_dict.get("personal_dump_chat_id", "")
+                set_exist = str(val) if val else "Not Configured"
+            text += f"➲ <b>Personal Bot {fname_dict[key]} :</b> {set_exist}\n\n"
+        elif key in ["lprefix", "lremname_auto", "lremname_regex", "lsuffix", "lcaption", "ldump", "lmeta"]:
+            set_exist = (
+                "Not Exists"
+                if (
+                    val := user_dict.get(
+                        key, config_dict.get(f"LEECH_FILENAME_{key[1:].upper()}", "")
+                    )
+                )
+                == ""
+                else val
+            )
+            if set_exist != "Not Exists" and key == "ldump":
+                set_exist = "\n\n" + "\n".join(
+                    [
+                        f"{index}. <b>{dump}</b> : <code>{ids}</code>"
+                        for index, (dump, ids) in enumerate(val.items(), start=1)
+                    ]
+                )
+            text += f"➲ <b>Leech Filename {fname_dict[key]} :</b> {set_exist}\n\n"
+        elif key in ["mprefix", "mremname", "msuffix"]:
+            set_exist = (
+                "Not Exists"
+                if (
+                    val := user_dict.get(
+                        key, config_dict.get(f"MIRROR_FILENAME_{key[1:].upper()}", "")
+                    )
+                )
+                == ""
+                else val
+            )
+            text += f"➲ <b>Mirror Filename {fname_dict[key]} :</b> {set_exist}\n\n"
+        elif key in ["gofile", "streamtape"]:
+            set_exist = (
+                "Exists"
+                if key in (ddl_dict := user_dict.get("ddl_servers", {}))
+                and ddl_dict[key][1]
+                and ddl_dict[key][1] != ""
+                else "Not Exists"
+            )
+            ddl_mode = (
+                "Enabled"
+                if key in (ddl_dict := user_dict.get("ddl_servers", {}))
+                and ddl_dict[key][0]
+                else "Disabled"
+            )
+            text = (
+                f"➲ <b>Upload {fname_dict[key]} :</b> {ddl_mode}\n"
+                f"➲ <b>{fname_dict[key]}'s API Key :</b> {set_exist}\n\n"
+            )
+            buttons.ibutton(
+                "Disable DDL" if ddl_mode == "Enabled" else "Enable DDL",
+                f"userset {user_id} s{key}",
                 "header",
             )
-        buttons.data_button("Back", f"userset {user_id} back", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(2)
-
-        text = f"""⌬ <b>Mirror Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┖ <b>Bot Stop Duplicate</b> → <b>{sd_msg}</b>
-"""
-
-    elif stype == "mega":
-        mega_email = user_dict.get("MEGA_EMAIL", "")
-        mega_password = user_dict.get("MEGA_PASSWORD", "")
-        has_creds = bool(mega_email and mega_password)
-        masked_pass = (
-            (
-                mega_password[:2] + "*" * (len(mega_password) - 4) + mega_password[-2:]
-                if len(mega_password) > 6
-                else "****"
+        elif key == "user_tds":
+            set_exist = len(val) if (val := user_dict.get(key, False)) else "Not Exists"
+            tds_mode = "Enabled" if user_dict.get("td_mode", False) else "Disabled"
+            buttons.ibutton(
+                "Disable UserTDs" if tds_mode == "Enabled" else "Enable UserTDs",
+                f"userset {user_id} td_mode",
+                "header",
             )
-            if mega_password
-            else ""
-        )
-
-        buttons.data_button("Mega Email", f"userset {user_id} menu MEGA_EMAIL")
-        if mega_email:
-            buttons.data_button(
-                "Mega Password", f"userset {user_id} menu MEGA_PASSWORD"
-            )
-
-        if has_creds:
-            buttons.data_button(
-                "Remove Account",
-                f"userset {user_id} remove MEGA_EMAIL",
-                position="l_body",
-            )
-
-        buttons.data_button("Back", f"userset {user_id} back mirror", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(1)
-
-        email_display = mega_email or "Not Set"
-        pass_display = masked_pass if mega_password else "Not Set"
-        account_status = "✓ Configured" if has_creds else "❌ Not Configured"
-        text = f"""⌬ <b>Mega Tools :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>Mega Email</b> → <code>{email_display}</code>
-┠ <b>Mega Password</b> → <code>{pass_display}</code>
-┖ <b>Account</b> → {account_status}"""
-
-    elif stype == "ffset":
-        buttons.data_button(
-            "FFmpeg Cmds", f"userset {user_id} menu FFMPEG_CMDS", "header"
-        )
-        if user_dict.get("FFMPEG_CMDS", False):
-            ffc = user_dict["FFMPEG_CMDS"]
-        elif "FFMPEG_CMDS" not in user_dict and Config.FFMPEG_CMDS:
-            ffc = Config.FFMPEG_CMDS
-        else:
-            ffc = "<b>Not Exists</b>"
-
-        if isinstance(ffc, dict):
-            ffc = "\n" + "\n".join(
-                [
-                    f"{no}. <b>{key}</b>: <code>{escape(str(value[0]))}</code>"
-                    for no, (key, value) in enumerate(ffc.items(), start=1)
-                ]
-            )
-
-        buttons.data_button("Metadata", f"userset {user_id} menu METADATA")
-        metadata_setting = user_dict.get("METADATA")
-        display_meta_val = "<b>Not Set</b>"
-        if isinstance(metadata_setting, dict) and metadata_setting:
-            display_meta_val = ", ".join(
-                f"{k}={escape(str(v))}" for k, v in metadata_setting.items()
-            )
-            display_meta_val = f"<code>{display_meta_val}</code>"
-        elif isinstance(metadata_setting, str) and metadata_setting:  # Legacy
-            display_meta_val = (
-                f"<code>{escape(metadata_setting)}</code> [<i>Legacy, needs re-set</i>]"
-            )
-
-        buttons.data_button("Audio Metadata", f"userset {user_id} menu AUDIO_METADATA")
-        audio_meta_setting = user_dict.get("AUDIO_METADATA")
-        display_audio_meta = "<b>Not Set</b>"
-        if isinstance(audio_meta_setting, dict) and audio_meta_setting:
-            display_audio_meta = ", ".join(
-                f"{k}={escape(str(v))}" for k, v in audio_meta_setting.items()
-            )
-            display_audio_meta = f"<code>{display_audio_meta}</code>"
-
-        buttons.data_button("Video Metadata", f"userset {user_id} menu VIDEO_METADATA")
-        video_meta_setting = user_dict.get("VIDEO_METADATA")
-        display_video_meta = "<b>Not Set</b>"
-        if isinstance(video_meta_setting, dict) and video_meta_setting:
-            display_video_meta = ", ".join(
-                f"{k}={escape(str(v))}" for k, v in video_meta_setting.items()
-            )
-            display_video_meta = f"<code>{display_video_meta}</code>"
-
-        buttons.data_button(
-            "Subtitle Metadata", f"userset {user_id} menu SUBTITLE_METADATA"
-        )
-        subtitle_meta_setting = user_dict.get("SUBTITLE_METADATA")
-        display_subtitle_meta = "<b>Not Set</b>"
-        if isinstance(subtitle_meta_setting, dict) and subtitle_meta_setting:
-            display_subtitle_meta = ", ".join(
-                f"{k}={escape(str(v))}" for k, v in subtitle_meta_setting.items()
-            )
-            display_subtitle_meta = f"<code>{display_subtitle_meta}</code>"
-
-        buttons.data_button("Back", f"userset {user_id} back", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(2)
-
-        text = f"""⌬ <b>FF Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>FFmpeg CLI Commands</b> → {ffc}
-┃
-┠ <b>Default Metadata</b> → {display_meta_val}
-┠ <b>Audio Metadata</b> → {display_audio_meta}
-┠ <b>Video Metadata</b> → {display_video_meta}
-┖ <b>Subtitle Metadata</b> → {display_subtitle_meta}"""
-
-    elif stype == "advanced":
-        buttons.data_button(
-            "Excluded Extensions", f"userset {user_id} menu EXCLUDED_EXTENSIONS"
-        )
-        if user_dict.get("EXCLUDED_EXTENSIONS", False):
-            ex_ex = user_dict["EXCLUDED_EXTENSIONS"]
-        elif "EXCLUDED_EXTENSIONS" not in user_dict:
-            ex_ex = excluded_extensions
-        else:
-            ex_ex = "None"
-
-        if ex_ex != "None":
-            ex_ex = ", ".join(ex_ex)
-
-        ns_msg = (
-            f"<code>{swap}</code>"
-            if (swap := user_dict.get("NAME_SWAP", False))
-            else "<b>Not Exists</b>"
-        )
-        buttons.data_button("Name Swap", f"userset {user_id} menu NAME_SWAP")
-
-        buttons.data_button("YT-DLP Options", f"userset {user_id} menu YT_DLP_OPTIONS")
-        if user_dict.get("YT_DLP_OPTIONS", False):
-            ytopt = user_dict["YT_DLP_OPTIONS"]
-        elif "YT_DLP_OPTIONS" not in user_dict and Config.YT_DLP_OPTIONS:
-            ytopt = Config.YT_DLP_OPTIONS
-        else:
-            ytopt = "None"
-
-        upload_paths = user_dict.get("UPLOAD_PATHS", {})
-        if not upload_paths and "UPLOAD_PATHS" not in user_dict and Config.UPLOAD_PATHS:
-            upload_paths = Config.UPLOAD_PATHS
-        else:
-            upload_paths = "None"
-        buttons.data_button("Upload Paths", f"userset {user_id} menu UPLOAD_PATHS")
-
-        yt_cookie_path = f"cookies/{user_id}/cookies.txt"
-        user_cookie_msg = (
-            "Exists" if await aiopath.exists(yt_cookie_path) else "Not Exists"
-        )
-        buttons.data_button(
-            "YT Cookie File", f"userset {user_id} menu USER_COOKIE_FILE"
-        )
-
-        buttons.data_button("Back", f"userset {user_id} back", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(2)
-
-        text = f"""⌬ <b>Advanced Settings :</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>Auto Name Swaps</b> → {ns_msg}
-┠ <b>Excluded Extensions</b> → <code>{ex_ex}</code>
-┠ <b>Upload Paths</b> → <b>{upload_paths}</b>
-┠ <b>YT-DLP Options</b> → <code>{ytopt}</code>
-┖ <b>YT User Cookie File</b> → <b>{user_cookie_msg}</b>"""
-    elif stype == "yttools":
-        buttons.data_button("YT Description", f"userset {user_id} menu YT_DESP")
-        yt_desp_val = user_dict.get(
-            "YT_DESP",
-            Config.YT_DESP if hasattr(Config, "YT_DESP") else "Not Set (Uses Default)",
-        )
-
-        buttons.data_button("YT Tags", f"userset {user_id} menu YT_TAGS")
-        yt_tags_val = user_dict.get(
-            "YT_TAGS",
-            Config.YT_TAGS if hasattr(Config, "YT_TAGS") else "Not Set (Uses Default)",
-        )
-        if isinstance(yt_tags_val, list):
-            yt_tags_val = ",".join(yt_tags_val)
-
-        buttons.data_button("YT Category ID", f"userset {user_id} menu YT_CATEGORY_ID")
-        yt_cat_id_val = user_dict.get(
-            "YT_CATEGORY_ID",
-            (
-                Config.YT_CATEGORY_ID
-                if hasattr(Config, "YT_CATEGORY_ID")
-                else "Not Set (Uses Default)"
-            ),
-        )
-
-        buttons.data_button(
-            "YT Privacy Status", f"userset {user_id} menu YT_PRIVACY_STATUS"
-        )
-        yt_privacy_val = user_dict.get(
-            "YT_PRIVACY_STATUS",
-            (
-                Config.YT_PRIVACY_STATUS
-                if hasattr(Config, "YT_PRIVACY_STATUS")
-                else "Not Set (Uses Default)"
-            ),
-        )
-
-        buttons.data_button("Back", f"userset {user_id} back mirror", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        btns = buttons.build_menu(2)
-
-        text = f"""⌬ <b>YouTube Tools Settings:</b>
-┟ <b>Name</b> → {user_name}
-┃
-┠ <b>YT Description</b> → <code>{escape(str(yt_desp_val))}</code>
-┠ <b>YT Tags</b> → <code>{escape(str(yt_tags_val))}</code>
-┠ <b>YT Category ID</b> → <code>{escape(str(yt_cat_id_val))}</code>
-┖ <b>YT Privacy Status</b> → <code>{escape(str(yt_privacy_val))}</code>"""
-
-    return text, btns
-
-
-async def update_user_settings(query, stype="main"):
-    handler_dict[query.from_user.id] = False
-    msg, button = await get_user_settings(query.from_user, stype)
-    await edit_message(query.message, msg, button)
-
-
-@new_task
-async def send_user_settings(_, message):
-    from_user = message.from_user
-    handler_dict[from_user.id] = False
-
-    # Shortcut: `/us3 -s thumb` (reply to a photo / document image / sticker) sets
-    # the user's persistent thumbnail directly without opening the menu.
-    text = (message.text or message.caption or "").strip()
-    parts = text.split(maxsplit=1)
-    arg = parts[1].strip().lower() if len(parts) > 1 else ""
-    if arg in ("-s thumb", "-s thumbnail", "set thumb", "set thumbnail", "-thumb"):
-        reply = message.reply_to_message
-        photo_msg = None
-        if reply is not None:
-            if reply.photo:
-                photo_msg = reply
-            elif reply.document and (reply.document.mime_type or "").startswith("image/"):
-                photo_msg = reply
-            elif reply.sticker and not reply.sticker.is_animated and not reply.sticker.is_video:
-                photo_msg = reply
-        if photo_msg is None:
-            await send_message(
-                message,
-                "<b>Usage:</b> reply to a photo (or image document) with "
-                "<code>/{cmd} -s thumb</code> to set it as your leech thumbnail.".format(
-                    cmd=parts[0].lstrip("/").split("@", 1)[0]
-                ),
-            )
-            return
-        try:
-            saved = await create_thumb(photo_msg, from_user.id)
-        except Exception as e:
-            await send_message(message, f"<b>Thumbnail save failed:</b> {e}")
-            return
-        update_user_ldata(from_user.id, "THUMBNAIL", saved)
-        if Config.DATABASE_URL:
-            await database.update_user_doc(from_user.id, "THUMBNAIL", saved)
-        await send_message(
-            message,
-            "<b>✅ Thumbnail saved.</b> Use <code>/{cmd}</code> → Thumbnail → View "
-            "to verify.".format(cmd=parts[0].lstrip("/").split("@", 1)[0]),
-        )
-        return
-
-    msg, button = await get_user_settings(from_user)
-    await send_message(message, msg, button)
-
-
-@new_task
-async def add_file(_, message, ftype, rfunc):
-    user_id = message.from_user.id
-    handler_dict[user_id] = False
-    if ftype == "THUMBNAIL":
-        des_dir = await create_thumb(message, user_id)
-    elif ftype == "RCLONE_CONFIG":
-        rpath = f"{getcwd()}/rclone/"
-        await makedirs(rpath, exist_ok=True)
-        des_dir = f"{rpath}{user_id}.conf"
-        await message.download(file_name=des_dir)
-    elif ftype == "TOKEN_PICKLE":
-        tpath = f"{getcwd()}/tokens/"
-        await makedirs(tpath, exist_ok=True)
-        des_dir = f"{tpath}{user_id}.pickle"
-        await message.download(file_name=des_dir)
-    elif ftype == "USER_COOKIE_FILE":
-        cpath = f"{getcwd()}/cookies/{user_id}"
-        await makedirs(cpath, exist_ok=True)
-        des_dir = f"{cpath}/cookies.txt"
-        await message.download(file_name=des_dir)
-    await delete_message(message)
-    update_user_ldata(user_id, ftype, des_dir)
-    await rfunc()
-    await database.update_user_doc(user_id, ftype, des_dir)
-
-
-@new_task
-async def add_one(_, message, option, rfunc):
-    user_id = message.from_user.id
-    handler_dict[user_id] = False
-    user_dict = user_data.get(user_id, {})
-    value = message.text
-    if value.startswith("{") and value.endswith("}"):
-        try:
-            value = literal_eval(value)
-            if not isinstance(value, dict):
-                raise ValueError("Expected a dict")
-            if option == "DRIVE_CAT":
-                parsed = {}
-                for k, v in value.items():
-                    if k.strip().casefold() == "default":
-                        raise ValueError(
-                            '"Default" is reserved and cannot be used as a category name'
-                        )
-                    parts = str(v).split("|", 1)
-                    did = parts[0].strip()
-                    ilink = parts[1].strip() if len(parts) > 1 else ""
-                    parsed[k.strip()] = {"drive_id": did, "index_link": ilink}
-                value = parsed
-            if user_dict.get(option):
-                user_dict[option].update(value)
-            else:
-                update_user_ldata(user_id, option, value)
-        except Exception as e:
-            await send_message(message, str(e))
-            return
-    else:
-        await send_message(message, "It must be Dict!")
-        return
-    await delete_message(message)
-    await rfunc()
-    await database.update_user_data(user_id)
-
-
-@new_task
-async def remove_one(_, message, option, rfunc):
-    user_id = message.from_user.id
-    handler_dict[user_id] = False
-    user_dict = user_data.get(user_id, {})
-    names = message.text.split("/")
-    for name in names:
-        if name in user_dict[option]:
-            del user_dict[option][name]
-    await delete_message(message)
-    await rfunc()
-    await database.update_user_data(user_id)
-
-
-@new_task
-async def set_option(_, message, option, rfunc):
-    user_id = message.from_user.id
-    handler_dict[user_id] = False
-    value = message.text
-    if option == "LEECH_SPLIT_SIZE":
-        if not value.isdigit():
-            value = get_size_bytes(value)
-        value = min(int(value), TgClient.MAX_SPLIT_SIZE)
-    # elif option == "LEECH_DUMP_CHAT": # TODO: Add
-    elif option == "EXCLUDED_EXTENSIONS":
-        fx = value.split()
-        value = ["aria2", "!qB"]
-        for x in fx:
-            x = x.lstrip(".")
-            value.append(x.strip().lower())
-    elif option == "YT_TAGS":
-        if isinstance(value, str):
-            value = [tag.strip() for tag in value.split(",") if tag.strip()]
-        elif not isinstance(value, list):
-            await send_message(message, "YT Tags must be a comma-separated string.")
-            return
-    elif option == "YT_CATEGORY_ID":
-        if isinstance(value, str) and value.isdigit():
-            value = int(value)
-        elif not isinstance(value, int):
-            await send_message(message, "YT Category ID must be a whole number.")
-            return
-    elif option == "YT_PRIVACY_STATUS":
-        allowed_statuses = ["public", "private", "unlisted"]
-        if not isinstance(value, str) or value.lower() not in allowed_statuses:
-            await send_message(
-                message,
-                f"YT Privacy Status must be one of: {', '.join(allowed_statuses)}.",
-            )
-            return
-        value = value.lower()
-    elif option in [
-        "METADATA",
-        "AUDIO_METADATA",
-        "VIDEO_METADATA",
-        "SUBTITLE_METADATA",
-    ]:
-        parsed_metadata_dict = {}
-        if value and isinstance(value, str):
-            if value.strip() == "":
-                value = {}
-            else:
-                parts = []
-                current = ""
-                i = 0
-                while i < len(value):
-                    if value[i] == "\\" and i + 1 < len(value) and value[i + 1] == "|":
-                        current += "|"
-                        i += 2
-                    elif value[i] == "|":
-                        parts.append(current)
-                        current = ""
-                        i += 1
-                    else:
-                        current += value[i]
-                        i += 1
-                if current:
-                    parts.append(current)
-
-                for part in parts:
-                    if "=" in part:
-                        key, val_str = part.split("=", 1)
-                        parsed_metadata_dict[key.strip()] = val_str.strip()
-                if not parsed_metadata_dict and value.strip() != "":
-                    await send_message(
-                        message,
-                        "Malformed metadata string. Format: key1=value1|key2=value2. Use \\| to escape pipe characters.",
-                    )
-                    return
-                value = parsed_metadata_dict
-        else:
-            value = {}
-
-    elif option in ["UPLOAD_PATHS", "FFMPEG_CMDS", "YT_DLP_OPTIONS", "DRIVE_CAT"]:
-        if value.startswith("{") and value.endswith("}"):
-            try:
-                value = literal_eval(sub(r"\s+", " ", value))
-                if not isinstance(value, dict):
-                    raise ValueError("Expected a dict")
-                if option == "DRIVE_CAT":
-                    parsed = {}
-                    for k, v in value.items():
-                        if k.strip().casefold() == "default":
-                            raise ValueError(
-                                '"Default" is reserved and cannot be used as a category name'
-                            )
-                        parts = str(v).split("|", 1)
-                        did = parts[0].strip()
-                        ilink = parts[1].strip() if len(parts) > 1 else ""
-                        parsed[k.strip()] = {"drive_id": did, "index_link": ilink}
-                    value = parsed
-            except Exception as e:
-                await send_message(message, str(e))
-                return
-        else:
-            await send_message(message, "It must be dict!")
-            return
-    update_user_ldata(user_id, option, value)
-    await delete_message(message)
-    await rfunc()
-    await database.update_user_data(user_id)
-
-
-async def get_menu(option, message, user_id):
-    handler_dict[user_id] = False
-    user_dict = user_data.get(user_id, {})
-
-    file_dict = {
-        "THUMBNAIL": f"thumbnails/{user_id}.jpg",
-        "RCLONE_CONFIG": f"rclone/{user_id}.conf",
-        "TOKEN_PICKLE": f"tokens/{user_id}.pickle",
-        "USER_COOKIE_FILE": f"cookies/{user_id}/cookies.txt",
-    }
-
-    buttons = ButtonMaker()
-    if option in ["THUMBNAIL", "RCLONE_CONFIG", "TOKEN_PICKLE", "USER_COOKIE_FILE"]:
-        key = "file"
-    else:
-        key = "set"
-    buttons.data_button(
-        "Change" if user_dict.get(option, False) else "Set",
-        f"userset {user_id} {key} {option}",
-    )
-    if user_dict.get(option, False):
-        if option == "THUMBNAIL":
-            buttons.data_button(
-                "View Thumb", f"userset {user_id} view THUMBNAIL", "header"
-            )
-        elif option in ["YT_DLP_OPTIONS", "FFMPEG_CMDS", "UPLOAD_PATHS", "DRIVE_CAT"]:
-            buttons.data_button(
-                "Add One", f"userset {user_id} addone {option}", "header"
-            )
-            buttons.data_button(
-                "Remove One", f"userset {user_id} rmone {option}", "header"
-            )
-
-        if key != "file":  # TODO: option default val check
-            buttons.data_button("Reset", f"userset {user_id} reset {option}")
-        elif await aiopath.exists(file_dict[option]):
-            buttons.data_button("Remove", f"userset {user_id} remove {option}")
-    if option in leech_options:
-        back_to = "leech"
-    elif option in rclone_options:
-        back_to = "rclone"
-    elif option in gdrive_options:
-        back_to = "gdrive"
-    elif option in yt_options:
-        back_to = "yttools"
-    elif option in ffset_options:
-        back_to = "ffset"
-    elif option in advanced_options:
-        back_to = "advanced"
-    elif option in mega_options:
-        back_to = "mega"
-    else:
-        back_to = "back"
-    buttons.data_button("Back", f"userset {user_id} {back_to}", "footer")
-    buttons.data_button(
-        "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-    )
-    val = user_dict.get(option)
-    if option in file_dict and await aiopath.exists(file_dict[option]):
-        val = "<b>Exists</b>"
-    elif option == "LEECH_SPLIT_SIZE":
-        val = get_readable_file_size(val)
-    elif option == "METADATA":
-        current_meta_val = user_dict.get(option)
-        if isinstance(current_meta_val, dict) and current_meta_val:
-            val = ", ".join(
-                f"{k}={escape(str(v))}" for k, v in current_meta_val.items()
-            )
-            val = f"<code>{val}</code>"
-        elif isinstance(current_meta_val, str) and current_meta_val:
-            val = (
-                f"<code>{escape(current_meta_val)}</code> [<i>Legacy, needs re-set</i>]"
-            )
-        elif not current_meta_val:
-            val = "<b>Not Set</b>"
-
-        if val is None:
-            val = "<b>Not Exists</b>"
-
-    elif option == "DRIVE_CAT":
-        default_id = user_dict.get("GDRIVE_ID") or Config.GDRIVE_ID
-        default_index = user_dict.get("INDEX_URL") or Config.INDEX_URL
-        lines = [f"  <b>Default</b>: <code>{escape(str(default_id))}</code>"]
-        if default_index:
-            lines[0] += f" | <code>{escape(default_index)}</code>"
-        if isinstance(val, dict):
-            for k, v in val.items():
-                did = v.get("drive_id", "")
-                ilink = v.get("index_link", "")
-                ilink_part = f" | <code>{escape(ilink)}</code>" if ilink else ""
-                lines.append(
-                    f"  <b>{escape(k)}</b>: <code>{escape(did)}</code>{ilink_part}"
+            if not config_dict["USER_TD_MODE"]:
+                tds_mode = "Force Disabled"
+            text += f"➲ <b>User TD Mode :</b> {tds_mode}\n"
+            text += f"➲ <b>{fname_dict[key]} :</b> {set_exist}\n\n"
+        
+        # Handle intro subtitle fields
+        elif key in ["intro_text", "intro_duration", "intro_fontsize"]:
+            intro_settings = user_dict.get("intro_subtitle", {})
+            if key == "intro_text":
+                set_exist = intro_settings.get("text", "")
+            elif key == "intro_duration":
+                set_exist = str(intro_settings.get("duration", "")) if intro_settings.get("duration") else ""
+            else:  # intro_fontsize
+                set_exist = str(intro_settings.get("font_size", "")) if intro_settings.get("font_size") else ""
+            
+            set_exist = "Not Exists" if set_exist == "" else set_exist
+            text = f"➲ <b>{fname_dict[key]} :</b> {set_exist}\n\n"
+        
+        elif key == "ffmpeg_cmds":
+            ffc = user_dict.get("ffmpeg_cmds", {})
+            if ffc:
+                set_exist = "\n" + "\n".join(
+                    [
+                        f"{no}. <b>{k}</b>: <code>{escape(str(v[0][:60]))}{'...' if len(str(v[0])) > 60 else ''}</code>"
+                        for no, (k, v) in enumerate(ffc.items(), start=1)
+                    ]
                 )
-            val = "<br>".join(lines)
-        elif not val:
-            val = "<b>Not Exists</b>"
+            else:
+                set_exist = "Not Exists"
+            text += f"➲ <b>{fname_dict[key]} :</b> {set_exist}\n\n"
+        
+        else:
+            return
+        text += f"➲ <b>Description :</b> <i>{desp_dict[key][0]}</i>"
+        if not edit_mode:
+            buttons.ibutton(
+                (
+                    f"Change {fname_dict[key]}"
+                    if set_exist
+                    and set_exist != "Not Exists"
+                    and (
+                        set_exist
+                        != get_readable_file_size(config_dict["LEECH_SPLIT_SIZE"])
+                        + " (Default)"
+                    )
+                    else f"Set {fname_dict[key]}"
+                ),
+                f"userset {user_id} {key} edit",
+            )
+        else:
+            text += "\n\n" + desp_dict[key][1]
+            buttons.ibutton("Stop Change", f"userset {user_id} {key}")
+        if (
+            set_exist
+            and set_exist != "Not Exists"
+            and (
+                set_exist
+                != get_readable_file_size(config_dict["LEECH_SPLIT_SIZE"])
+                + " (Default)"
+            )
+        ):
+            if key == "thumb":
+                buttons.ibutton("View Thumbnail", f"userset {user_id} vthumb", "header")
+            elif key == "user_tds":
+                buttons.ibutton("Show UserTDs", f"userset {user_id} show_tds", "header")
+            buttons.ibutton("↻ Delete", f"userset {user_id} d{key}")
+        buttons.ibutton("Back", f"userset {user_id} back {edit_type}", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        button = buttons.build_menu(2)
+    
+    return text, button
 
-    if option == "METADATA":
-        text = f"""⌬ <b><u>Menu Settings :</u></b>
-│
-┟ <b>Option</b> → {option}
-┃
-┠ <b>Option's Value</b> → {val if val else "<b>Not Exists</b>"}
-┃
-┠ <b>Default Input Type</b> → {user_settings_text[option][0]}
-┠ <b>Description</b> → {user_settings_text[option][1]}
-┃
-┠ <b>Dynamic Variables:</b>
-┠ • <code>{{filename}}</code> - Full filename
-┠ • <code>{{basename}}</code> - Filename without extension  
-┠ • <code>{{extension}}</code> - File extension
-┃
-┠ • <code>{{audiolang}}</code> - Audio language
-┖ • <code>{{sublang}}</code> - Subtitle language
-"""
+
+async def update_user_settings(
+    query, key=None, edit_type=None, edit_mode=None, msg=None, sdirect=False
+):
+    msg, button = await get_user_settings(
+        msg.from_user if sdirect else query.from_user, key, edit_type, edit_mode
+    )
+    await editMessage(query if sdirect else query.message, msg, button)
+
+
+# ============ INTRO SUBTITLE INPUT HANDLERS ============
+async def set_intro_text(client, message, pre_event):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    text = message.text
+    
+    # Validate and escape text
+    success, escaped_text, error = validate_and_escape_subtitle_text(text)
+    
+    if not success:
+        await sendMessage(message, f"❌ {error}")
+        await update_user_settings(pre_event, "intro_text", "leech")
+        return
+    
+    # Get or create intro_subtitle dict
+    intro_settings = user_data.get(user_id, {}).get("intro_subtitle", {})
+    intro_settings["text"] = text
+    
+    # Set defaults if not already set
+    if "color" not in intro_settings:
+        intro_settings["color"] = "white"
+    if "bg_color" not in intro_settings:
+        intro_settings["bg_color"] = "none"
+    if "duration" not in intro_settings:
+        intro_settings["duration"] = 5
+    if "mode" not in intro_settings:
+        intro_settings["mode"] = "softsub"
+    if "font_size" not in intro_settings:
+        intro_settings["font_size"] = 24
+    if "enabled" not in intro_settings:
+        intro_settings["enabled"] = True
+    
+    update_user_ldata(user_id, "intro_subtitle", intro_settings)
+    
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
+    
+    await deleteMessage(message)
+    await update_user_settings(pre_event, "intro_text", "leech")
+
+
+async def set_intro_duration(client, message, pre_event):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    duration_text = message.text.strip()
+    
+    # Validate duration
+    if not duration_text.isdigit():
+        await sendMessage(message, "❌ Duration must be a number!")
+        await update_user_settings(pre_event, "intro_duration", "leech")
+        return
+    
+    duration = int(duration_text)
+    
+    if duration < 1 or duration > 30:
+        await sendMessage(message, "❌ Duration must be between 1-30 seconds!")
+        await update_user_settings(pre_event, "intro_duration", "leech")
+        return
+    
+    # Update intro settings
+    intro_settings = user_data.get(user_id, {}).get("intro_subtitle", {})
+    intro_settings["duration"] = duration
+    update_user_ldata(user_id, "intro_subtitle", intro_settings)
+    
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
+    
+    await deleteMessage(message)
+    await update_user_settings(pre_event, "intro_duration", "leech")
+
+
+async def set_intro_fontsize(client, message, pre_event):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    size_text = message.text.strip()
+    
+    # Validate font size
+    if not size_text.isdigit():
+        await sendMessage(message, "❌ Font size must be a number!")
+        await update_user_settings(pre_event, "intro_fontsize", "leech")
+        return
+    
+    font_size = int(size_text)
+    
+    if font_size < 12 or font_size > 72:
+        await sendMessage(message, "❌ Font size must be between 12-72!")
+        await update_user_settings(pre_event, "intro_fontsize", "leech")
+        return
+    
+    # Update intro settings
+    intro_settings = user_data.get(user_id, {}).get("intro_subtitle", {})
+    intro_settings["font_size"] = font_size
+    update_user_ldata(user_id, "intro_subtitle", intro_settings)
+    
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
+    
+    await deleteMessage(message)
+    await update_user_settings(pre_event, "intro_fontsize", "leech")
+
+
+async def user_settings(client, message):
+    if len(message.command) > 1 and (
+        message.command[1] == "-s" or message.command[1] == "-set"
+    ):
+        set_arg = message.command[2].strip() if len(message.command) > 2 else None
+        msg = await sendMessage(message, "<i>Fetching Settings...</i>", photo="IMAGES")
+        if set_arg and (reply_to := message.reply_to_message):
+            if message.from_user.id != reply_to.from_user.id:
+                return await editMessage(
+                    msg,
+                    "<i>Reply to Your Own Message for Setting via Args Directly</i>",
+                )
+            if (
+                set_arg
+                in [
+                    "lprefix",
+                    "lsuffix",
+                    "lremname",
+                    "lcaption",
+                    "ldump",
+                    "yt_opt",
+                    "lmeta",
+                    "intro_text",
+                    "intro_duration",
+                    "intro_fontsize",
+                ]
+                and reply_to.text
+            ):
+                return await set_custom(client, reply_to, msg, set_arg, True)
+            elif set_arg == "thumb" and reply_to.media:
+                return await set_thumb(client, reply_to, msg, set_arg, True)
+        await editMessage(
+            msg,
+            """㊂ <b><u>Available Flags :</u></b>
+>> Reply to the Value with appropriate arg respectively to set directly without opening USet.
+
+➲ <b>Custom Thumbnail :</b>
+    /cmd -s thumb
+➲ <b>Leech Filename Prefix :</b>
+    /cmd -s lprefix
+➲ <b>Leech Filename Suffix :</b>
+    /cmd -s lsuffix
+➲ <b>Leech Filename Remname :</b>
+    /cmd -s lremname
+➲ <b>Leech Filename Caption :</b>
+    /cmd -s lcaption
+➲ <b>Leech Metadata Text :</b>
+    /cmd -s lmeta
+➲ <b>YT-DLP Options :</b>
+    /cmd -s yt_opt
+➲ <b>Leech User Dump :</b>
+    /cmd -s ldump""",
+        )
     else:
-        text = f"""⌬ <b><u>Menu Settings :</u></b>
-│
-┟ <b>Option</b> → {option}
-┃
-┠ <b>Option's Value</b> → {val if val else "<b>Not Exists</b>"}
-┃
-┠ <b>Default Input Type</b> → {user_settings_text[option][0]}
-┖ <b>Description</b> → {user_settings_text[option][1]}
-"""
-    await edit_message(message, text, buttons.build_menu(2))
+        from_user = message.from_user
+        handler_dict[from_user.id] = False
+        msg, button = await get_user_settings(from_user)
+        await sendMessage(message, msg, button, "IMAGES")
+
+
+async def set_personal_setting(client, message, pre_event, key):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    value = message.text.strip()
+    
+    if key == "pbot_token":
+        verifying_msg = await sendMessage(message, "⏳ <i>Verifying bot token, please wait...</i>")
+        success, res = await verify_personal_bot(value)
+        await deleteMessage(verifying_msg)
+        
+        if success:
+            update_user_ldata(user_id, "personal_bot_token", value)
+            update_user_ldata(user_id, "personal_bot_username", res)
+            await PersonalBotManager.get_instance().stop_client(user_id)
+            await sendMessage(message, f"✅ <b>Success!</b> Bot token verified.\nConnected to: @{res}")
+        else:
+            await sendMessage(message, f"❌ <b>Failed!</b> Invalid bot token:\n<code>{escape(res)}</code>")
+            
+    elif key == "pdump_chat":
+        if value.startswith("-100"):
+            try:
+                chat_id = int(value)
+            except ValueError:
+                chat_id = value
+        elif value.startswith("-") or value.isdigit():
+            try:
+                chat_id = int(value)
+            except ValueError:
+                chat_id = value
+        else:
+            chat_id = value
+            
+        update_user_ldata(user_id, "personal_dump_chat_id", chat_id)
+        update_user_ldata(user_id, "personal_dump_verified", False)
+        await sendMessage(message, f"✅ <b>Dump Channel saved!</b>\nTarget: <code>{chat_id}</code>\n\n<i>Note: Remember to run 'Verify Permissions' to ensure your Personal Bot can write to this channel!</i>")
+        
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
+        
+    await deleteMessage(message)
+    await update_user_settings(pre_event, "personal_bot")
+
+
+async def set_custom(client, message, pre_event, key, direct=False):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    value = message.text
+    LOGGER.info(f"[SET_CUSTOM] Called for user {user_id}, key={key}, value={value[:50] if value else 'None'}")
+    return_key = "leech"
+    n_key = key
+    user_dict = user_data.get(user_id, {})
+    if key in ["gofile", "streamtape"]:
+        ddl_dict = user_dict.get("ddl_servers", {})
+        mode, api = ddl_dict.get(key, [False, ""])
+        if key == "gofile" and not await Gofile.is_goapi(value):
+            value = ""
+        ddl_dict[key] = [mode, value]
+        value = ddl_dict
+        n_key = "ddl_servers"
+        return_key = "ddl_servers"
+    elif key == "user_tds":
+        user_tds = user_dict.get(key, {})
+        for td_item in value.split("\n"):
+            if td_item == "":
+                continue
+            split_ck = td_item.split()
+            td_details = td_item.rsplit(
+                maxsplit=(
+                    2
+                    if split_ck[-1].startswith("http")
+                    and not is_gdrive_link(split_ck[-1])
+                    else 1 if len(split_ck[-1]) > 15 else 0
+                )
+            )
+            if td_details[0] in list(categories_dict.keys()):
+                continue
+            for title in list(user_tds.keys()):
+                if td_details[0].casefold() == title.casefold():
+                    del user_tds[title]
+            if len(td_details) > 1:
+                if is_gdrive_link(td_details[1].strip()):
+                    td_details[1] = GoogleDriveHelper.getIdFromUrl(td_details[1])
+                if await sync_to_async(
+                    GoogleDriveHelper().getFolderData, td_details[1]
+                ):
+                    user_tds[td_details[0]] = {
+                        "drive_id": td_details[1],
+                        "index_link": (
+                            td_details[2].rstrip("/") if len(td_details) > 2 else ""
+                        ),
+                    }
+        value = user_tds
+        return_key = "mirror"
+    elif key == "ldump":
+        ldumps = user_dict.get(key, {})
+        for dump_item in value.split("\n"):
+            if dump_item == "":
+                continue
+            dump_info = dump_item.rsplit(
+                maxsplit=(1 if dump_item.split()[-1].startswith(("-100", "@")) else 0)
+            )
+            if dump_info[0] in list(ldumps.keys()):
+                continue
+            for title in list(ldumps.keys()):
+                if dump_info[0].casefold() == title.casefold():
+                    del ldumps[title]
+            if len(dump_info) > 1 and (dump_chat := await chat_info(dump_info[1])):
+                ldumps[dump_info[0]] = dump_chat.id
+        value = ldumps
+    elif key in ["yt_opt", "usess"]:
+        if key == "usess":
+            password = Fernet.generate_key()
+            try:
+                await deleteMessage(
+                    await (
+                        await sendCustomMsg(
+                            message.from_user.id,
+                            f"<u><b>Decryption Key:</b></u> \n┃\n┃ <code>{password.decode()}</code>\n┃\n┖ <b>Note:</b> <i>Keep this Key Securely, this is not Stored in Bot and Access Key to use your Session...</i>",
+                        )
+                    ).pin(both_sides=True)
+                )
+                encrypt_sess = Fernet(password).encrypt(value.encode())
+                value = encrypt_sess.decode()
+            except Exception:
+                value = ""
+        return_key = "universal"
+    elif key == "ffmpeg_cmds":
+        import json
+        try:
+            parsed = json.loads(value)
+            if not isinstance(parsed, dict):
+                await sendMessage(message, "❌ <b>FFMPEG_CMDS must be a JSON dict!</b>\nExample: <code>{\"keep_japanese\": [\"-i mltb.video -map 0:v:0 -c copy mltb.mkv\"]}</code>")
+                await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+                return
+            for k, v in parsed.items():
+                if not isinstance(v, list):
+                    parsed[k] = [v]
+            value = parsed
+        except json.JSONDecodeError:
+            await sendMessage(message, "❌ <b>Invalid JSON format!</b>\nSend a valid JSON dict.\nExample: <code>{\"keep_japanese\": [\"-i mltb.video -map 0:v:0 -c copy mltb.mkv\"]}</code>")
+            await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+            return
+    elif key in ["intro_text", "intro_duration", "intro_fontsize"]:
+        # Handle intro subtitle fields inline
+        intro_settings = user_dict.get("intro_subtitle", {})
+        
+        if key == "intro_text":
+            # Validate text
+            success, escaped_text, error = validate_and_escape_subtitle_text(value)
+            if not success:
+                await sendMessage(message, f"❌ {error}")
+                await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+                return
+            intro_settings["text"] = value
+            # Set defaults
+            if "color" not in intro_settings:
+                intro_settings["color"] = "white"
+            if "bg_color" not in intro_settings:
+                intro_settings["bg_color"] = "none"
+            if "duration" not in intro_settings:
+                intro_settings["duration"] = 5
+            if "mode" not in intro_settings:
+                intro_settings["mode"] = "softsub"
+            if "font_size" not in intro_settings:
+                intro_settings["font_size"] = 24
+        
+        elif key == "intro_duration":
+            # Validate duration
+            if not value.isdigit():
+                await sendMessage(message, "❌ Duration must be a number!")
+                await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+                return
+            duration = int(value)
+            if duration < 1 or duration > 30:
+                await sendMessage(message, "❌ Duration must be between 1-30 seconds!")
+                await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+                return
+            intro_settings["duration"] = duration
+        
+        elif key == "intro_fontsize":
+            # Validate font size
+            if not value.isdigit():
+                await sendMessage(message, "❌ Font size must be a number!")
+                await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+                return
+            font_size = int(value)
+            if font_size < 12 or font_size > 72:
+                await sendMessage(message, "❌ Font size must be between 12-72!")
+                await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+                return
+            intro_settings["font_size"] = font_size
+        
+        value = intro_settings
+        n_key = "intro_subtitle"
+        return_key = "leech"
+    
+    update_user_ldata(user_id, n_key, value)
+    await deleteMessage(message)
+    await update_user_settings(pre_event, key, return_key, msg=message, sdirect=direct)
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
+
+
+async def set_thumb(client, message, pre_event, key, direct=False):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    path = "Thumbnails/"
+    if not await aiopath.isdir(path):
+        await mkdir(path)
+    photo_dir = await message.download()
+    des_dir = ospath.join(path, f"{user_id}.jpg")
+    await sync_to_async(Image.open(photo_dir).convert("RGB").save, des_dir, "JPEG")
+    await aioremove(photo_dir)
+    update_user_ldata(user_id, "thumb", des_dir)
+    await deleteMessage(message)
+    await update_user_settings(pre_event, key, "leech", msg=message, sdirect=direct)
+    if DATABASE_URL:
+        await DbManger().update_user_doc(user_id, "thumb", des_dir)
+
+
+async def add_rclone(client, message, pre_event):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    path = f"{getcwd()}/rclone/"
+    if not await aiopath.isdir(path):
+        await mkdir(path)
+    des_dir = ospath.join(path, f"{user_id}.conf")
+    await message.download(file_name=des_dir)
+    update_user_ldata(user_id, "rclone", f"rclone/{user_id}.conf")
+    await deleteMessage(message)
+    await update_user_settings(pre_event, "rcc", "mirror")
+    if DATABASE_URL:
+        await DbManger().update_user_doc(user_id, "rclone", des_dir)
+
+
+async def leech_split_size(client, message, pre_event):
+    user_id = message.from_user.id
+    handler_dict[user_id] = False
+    sdic = ["b", "kb", "mb", "gb"]
+    value = message.text.strip()
+    slice = -2 if value[-2].lower() in ["k", "m", "g"] else -1
+    out = value[slice:].strip().lower()
+    if out in sdic:
+        value = min(
+            (float(value[:slice].strip()) * 1024 ** sdic.index(out)), MAX_SPLIT_SIZE
+        )
+    update_user_ldata(user_id, "split_size", int(round(value)))
+    await deleteMessage(message)
+    await update_user_settings(pre_event, "split_size", "leech")
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
 
 
 async def event_handler(client, query, pfunc, rfunc, photo=False, document=False):
     user_id = query.from_user.id
     handler_dict[user_id] = True
-    start_time = update_time = time()
+    start_time = time()
 
     async def event_filter(_, __, event):
         if photo:
-            mtype = event.photo or event.document
+            mtype = event.photo
         elif document:
             mtype = event.document
         else:
@@ -1471,277 +1266,849 @@ async def event_handler(client, query, pfunc, rfunc, photo=False, document=False
     handler = client.add_handler(
         MessageHandler(pfunc, filters=create(event_filter)), group=-1
     )
-
     while handler_dict[user_id]:
         await sleep(0.5)
         if time() - start_time > 60:
             handler_dict[user_id] = False
             await rfunc()
-        elif time() - update_time > 8 and handler_dict[user_id]:
-            update_time = time()
-            msg = await client.get_messages(query.message.chat.id, query.message.id)
-            text = msg.text.split("\n")
-            text[-1] = (
-                f"┖ <b>Time Left :</b> <code>{round(60 - (time() - start_time), 2)} sec</code>"
-            )
-            await edit_message(msg, "\n".join(text), msg.reply_markup)
     client.remove_handler(*handler)
 
 
-@new_task
+
+
+# Simplified approach - store callback info in handler_dict instead of dynamic handlers
+async def wait_for_input(query, pfunc, rfunc, photo=False, document=False):
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    
+    # Store callback info in handler_dict
+    handler_dict[user_id] = {
+        "active": True,
+        "chat_id": chat_id,
+        "pfunc": pfunc,
+        "rfunc": rfunc,
+        "photo": photo,
+        "document": document,
+        "start_time": time()
+    }
+    
+    LOGGER.info(f"[WAIT_INPUT] Registered input handler for user {user_id} in chat {chat_id}")
+
+
+# Global message handler - processes messages for users waiting for input
+async def global_settings_input_handler(client, message):
+    user_id = message.from_user.id if message.from_user else None
+    chat_id = message.chat.id
+    
+    if not user_id or user_id not in handler_dict:
+        return
+    
+    user_handler = handler_dict[user_id]
+    
+    # Check if it's a dict (new system) or bool (old system - ignore)
+    if not isinstance(user_handler, dict) or not user_handler.get("active"):
+        return
+    
+    # Check if message is in the right chat
+    if user_handler["chat_id"] != chat_id:
+        return
+    
+    # Check for timeout (5 minutes)
+    if time() - user_handler["start_time"] > 300:
+        LOGGER.info(f"[GLOBAL_HANDLER] Timeout for user {user_id}")
+        handler_dict[user_id] = False
+        await user_handler["rfunc"]()
+        return
+    
+    # Check message type matches what we're waiting for
+    if user_handler["photo"] and not message.photo:
+        return
+    if user_handler["document"] and not message.document:
+        return
+    if not user_handler["photo"] and not user_handler["document"] and not message.text:
+        return
+    
+    LOGGER.info(f"[GLOBAL_HANDLER] Processing input for user {user_id}: {message.text if message.text else 'media'}")
+    
+    # Clear handler before processing to prevent re-entrance
+    handler_dict[user_id] = False
+    
+    # Call the processing function
+    try:
+        await user_handler["pfunc"](client, message)
+        LOGGER.info(f"[GLOBAL_HANDLER] Successfully processed input for user {user_id}")
+    except Exception as e:
+        LOGGER.error(f"[GLOBAL_HANDLER] Error processing input for user {user_id}: {e}", exc_info=True)
+
+
+
 async def edit_user_settings(client, query):
     from_user = query.from_user
     user_id = from_user.id
-    name = from_user.mention
     message = query.message
     data = query.data.split()
-
-    handler_dict[user_id] = False
-    thumb_path = f"thumbnails/{user_id}.jpg"
-    rclone_conf = f"rclone/{user_id}.conf"
-    token_pickle = f"tokens/{user_id}.pickle"
-    yt_cookie_path = f"cookies/{user_id}/cookies.txt"
-
+    thumb_path = f"Thumbnails/{user_id}.jpg"
+    rclone_path = f"rclone/{user_id}.conf"
     user_dict = user_data.get(user_id, {})
     if user_id != int(data[1]):
-        return await query.answer("Not Yours!", show_alert=True)
-    elif data[2] == "setevent":
-        await query.answer()
-    elif data[2] in [
-        "general",
-        "mirror",
-        "leech",
-        "uphoster",
-        "gofile",
-        "buzzheavier",
-        "pixeldrain",
-        "devuploads",
-        "vikingfile",
-        "ffset",
-        "advanced",
-        "gdrive",
-        "rclone",
-    ]:
+        await query.answer("Not Yours!", show_alert=True)
+    elif data[2] in ["universal", "mirror", "leech", "personal_bot"]:
         await query.answer()
         await update_user_settings(query, data[2])
-    elif data[2] == "mega":
+    elif data[2] == "toggle_pbot":
+        handler_dict[user_id] = False
+        if not user_dict.get("personal_bot_token"):
+            return await query.answer("Please connect a bot token first!", show_alert=True)
         await query.answer()
-        msg, button = await get_user_settings(query.from_user, "mega")
-        await edit_message(message, msg, button)
-        mega_email = user_dict.get("MEGA_EMAIL", "")
-        mega_password = user_dict.get("MEGA_PASSWORD", "")
-        if mega_email and mega_password:
-            info_text = await get_mega_account_info(mega_email, mega_password)
-            msg += f"\n\n{info_text}"
-            await edit_message(message, msg, button)
-    elif data[2] == "yttools":
+        current = user_dict.get("personal_bot_enabled", False)
+        update_user_ldata(user_id, "personal_bot_enabled", not current)
+        await update_user_settings(query, "personal_bot")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "toggle_pdump":
+        handler_dict[user_id] = False
+        if not user_dict.get("personal_dump_chat_id"):
+            return await query.answer("Please configure a dump channel first!", show_alert=True)
         await query.answer()
-        await update_user_settings(query, data[2])
-    elif data[2] == "uphoster_destinations":
-        await query.answer()
-        user_dict = user_data.get(user_id, {})
-        uphoster_service = user_dict.get("UPHOSTER_SERVICE", "gofile")
-        selected_services = uphoster_service.split(",") if uphoster_service else []
-
-        if len(data) > 3:
-            service = data[3]
-            if service in selected_services:
-                if len(selected_services) > 1:
-                    selected_services.remove(service)
-                else:
-                    await query.answer(
-                        "At least one destination must be selected!", show_alert=True
-                    )
-            else:
-                selected_services.append(service)
-            new_services = ",".join(selected_services)
-            update_user_ldata(user_id, "UPHOSTER_SERVICE", new_services)
-            await database.update_user_data(user_id)
-            selected_services = new_services.split(",")
-        else:
-            selected_services = (
-                uphoster_service.split(",") if uphoster_service else ["gofile"]
+        current = user_dict.get("personal_dump_enabled", False)
+        update_user_ldata(user_id, "personal_dump_enabled", not current)
+        await update_user_settings(query, "personal_bot")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] in ["rm_pbot", "dpbot_token"]:
+        handler_dict[user_id] = False
+        await query.answer("Bot Token removed!")
+        update_user_ldata(user_id, "personal_bot_token", "")
+        update_user_ldata(user_id, "personal_bot_username", "None")
+        update_user_ldata(user_id, "personal_bot_enabled", False)
+        await PersonalBotManager.get_instance().stop_client(user_id)
+        await update_user_settings(query, "personal_bot" if data[2] == "rm_pbot" else "pbot_token", "personal_bot")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] in ["rm_pdump", "dpdump_chat"]:
+        handler_dict[user_id] = False
+        await query.answer("Dump channel removed!")
+        update_user_ldata(user_id, "personal_dump_chat_id", "")
+        update_user_ldata(user_id, "personal_dump_enabled", False)
+        update_user_ldata(user_id, "personal_dump_verified", False)
+        await update_user_settings(query, "personal_bot" if data[2] == "rm_pdump" else "pdump_chat", "personal_bot")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "verify_pbot":
+        handler_dict[user_id] = False
+        token = user_dict.get("personal_bot_token", "")
+        dump = user_dict.get("personal_dump_chat_id", "")
+        if not token or not dump:
+            return await query.answer("Configure both Bot Token and Dump Chat first!", show_alert=True)
+        await query.answer("Verifying write access to dump channel...", show_alert=False)
+        success, msg = await verify_personal_dump(token, dump)
+        if success:
+            update_user_ldata(user_id, "personal_dump_verified", True)
+            btn = ButtonMaker()
+            btn.ibutton("OK", f"userset {user_id} personal_bot")
+            await query.message.edit_text(
+                f"✅ <b>Verification Successful!</b>\n\n{msg}",
+                reply_markup=btn.build_menu(1)
             )
-
-        buttons = ButtonMaker()
-        for service in [
-            "gofile",
-            "buzzheavier",
-            "pixeldrain",
-            "devuploads",
-            "vikingfile",
-        ]:
-            state = "✓" if service in selected_services else ""
-            buttons.data_button(
-                f"{service.capitalize()} {state}",
-                f"userset {user_id} uphoster_destinations {service}",
+        else:
+            update_user_ldata(user_id, "personal_dump_verified", False)
+            btn = ButtonMaker()
+            btn.ibutton("Try Again", f"userset {user_id} personal_bot")
+            await query.message.edit_text(
+                f"❌ <b>Verification Failed!</b>\n\n<b>Error:</b> <code>{escape(msg)}</code>",
+                reply_markup=btn.build_menu(1)
             )
-
-        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-
-        text = """⌬ <b>Select Uphoster Destinations :</b>"""
-        await edit_message(message, text, buttons.build_menu(2))
-    elif data[2] == "menu":
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] in ["pbot_token", "pdump_chat"]:
         await query.answer()
-        await get_menu(data[3], message, user_id)
-    elif data[2] == "tog":
-        await query.answer()
-        update_user_ldata(user_id, data[3], data[4] == "t")
-        if data[3] == "STOP_DUPLICATE":
-            back_to = "gdrive"
-        elif data[3] == "drive_cat_mode":
-            back_to = "mirror"
-        elif data[3] in ["USER_TOKENS", "USE_DEFAULT_COOKIE"]:
-            back_to = "general"
-        else:
-            back_to = "leech"
-        await update_user_settings(query, stype=back_to)
-        await database.update_user_data(user_id)
-    elif data[2] == "file":
-        await query.answer()
-        buttons = ButtonMaker()
-        text = user_settings_text[data[3]][2]
-        buttons.data_button("Stop", f"userset {user_id} menu {data[3]} stop")
-        buttons.data_button("Back", f"userset {user_id} menu {data[3]}", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        prompt_title = data[3].replace("_", " ").title()
-        new_message_text = f"⌬ <b>Set {prompt_title}</b>\n\n{text}"
-        await edit_message(message, new_message_text, buttons.build_menu(1))
-        rfunc = partial(get_menu, data[3], message, user_id)
-        pfunc = partial(add_file, ftype=data[3], rfunc=rfunc)
-        await event_handler(
-            client,
-            query,
-            pfunc,
-            rfunc,
-            photo=data[3] == "THUMBNAIL",
-            document=data[3] != "THUMBNAIL",
-        )
-    elif data[2] in ["set", "addone", "rmone"]:
-        await query.answer()
-        buttons = ButtonMaker()
-        if data[2] == "set":
-            text = user_settings_text[data[3]][2]
-            func = set_option
-        elif data[2] == "addone":
-            text = f"Add one or more string key and value to {data[3]}. Example: {{'key 1': 62625261, 'key 2': 'value 2'}}. Timeout: 60 sec"
-            func = add_one
-        elif data[2] == "rmone":
-            text = f"Remove one or more key from {data[3]}. Example: key 1/key2/key 3. Timeout: 60 sec"
-            func = remove_one
-        buttons.data_button("Stop", f"userset {user_id} menu {data[3]} stop")
-        buttons.data_button("Back", f"userset {user_id} menu {data[3]}", "footer")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        await edit_message(
-            message, message.text.html + "\n\n" + text, buttons.build_menu(1)
-        )
-        rfunc = partial(get_menu, data[3], message, user_id)
-        pfunc = partial(func, option=data[3], rfunc=rfunc)
-        await event_handler(client, query, pfunc, rfunc)
-    elif data[2] == "remove":
-        await query.answer("Removed!", show_alert=True)
-        if data[3] in [
-            "THUMBNAIL",
-            "RCLONE_CONFIG",
-            "TOKEN_PICKLE",
-            "USER_COOKIE_FILE",
-        ]:
-            if data[3] == "THUMBNAIL":
-                fpath = thumb_path
-            elif data[3] == "RCLONE_CONFIG":
-                fpath = rclone_conf
-            elif data[3] == "USER_COOKIE_FILE":
-                fpath = yt_cookie_path
-            else:
-                fpath = token_pickle
-            if await aiopath.exists(fpath):
-                await remove(fpath)
-            del user_dict[data[3]]
-            await database.update_user_doc(user_id, data[3])
-        else:
-            update_user_ldata(user_id, data[3], "")
-            if data[3] == "MEGA_EMAIL":
-                update_user_ldata(user_id, "MEGA_PASSWORD", "")
-            await database.update_user_data(user_id)
-        await get_menu(data[3], message, user_id)
-    elif data[2] == "reset":
-        await query.answer("Reset Done!", show_alert=True)
-        user_dict.pop(data[3], None)
-        await database.update_user_data(user_id)
-        await get_menu(data[3], message, user_id)
-    elif data[2] == "confirm_reset_all":
-        await query.answer()
-        buttons = ButtonMaker()
-        buttons.data_button("Yes", f"userset {user_id} do_reset_all yes")
-        buttons.data_button("No", f"userset {user_id} do_reset_all no")
-        buttons.data_button(
-            "Close", f"userset {user_id} close", "footer", style=ButtonStyle.DANGER
-        )
-        text = "<i>Are you sure you want to reset all your user settings?</i>"
-        await edit_message(query.message, text, buttons.build_menu(2))
-    elif data[2] == "do_reset_all":
-        if data[3] == "yes":
-            await query.answer("Reset Done!", show_alert=True)
-            user_dict = user_data.get(user_id, {})
-            for k in list(user_dict.keys()):
-                if k not in ("SUDO", "AUTH", "VERIFY_TOKEN", "VERIFY_TIME"):
-                    del user_dict[k]
-            for fpath in [thumb_path, rclone_conf, token_pickle, yt_cookie_path]:
-                if await aiopath.exists(fpath):
-                    await remove(fpath)
-            await update_user_settings(query)
-            await database.update_user_data(user_id)
-        else:
-            await query.answer("Reset Cancelled.", show_alert=True)
-            await update_user_settings(query)
-    elif data[2] == "view":
-        await query.answer()
-        await send_file(message, thumb_path, name)
-    elif data[2] in ["gd", "rc"]:
-        await query.answer()
-        du = "rc" if data[2] == "gd" else "gd"
-        update_user_ldata(user_id, "DEFAULT_UPLOAD", du)
-        await update_user_settings(query, stype="general")
-        await database.update_user_data(user_id)
-    elif data[2] == "back":
-        await query.answer()
-        stype = data[3] if len(data) == 4 else "main"
-        await update_user_settings(query, stype)
-    else:
-        await query.answer()
-        await delete_message(message, message.reply_to_message)
-
-
-@new_task
-async def get_users_settings(_, message):
-    msg = ""
-    if auth_chats:
-        msg += f"AUTHORIZED_CHATS: {auth_chats}\n"
-    if sudo_users:
-        msg += f"SUDO_USERS: {sudo_users}\n\n"
-    if user_data:
-        for u, d in user_data.items():
-            kmsg = f"\n<b>{u}:</b>\n"
-            if vmsg := "".join(
-                f"{k}: <code>{v or None}</code>\n" for k, v in d.items()
-            ):
-                msg += kmsg + vmsg
-        if not msg:
-            await send_message(message, "No users data!")
+        edit_mode = len(data) == 4
+        await update_user_settings(query, data[2], "personal_bot", edit_mode)
+        if not edit_mode:
             return
-        msg_ecd = msg.encode()
-        if len(msg_ecd) > 4000:
-            with BytesIO(msg_ecd) as ofile:
-                ofile.name = "users_settings.txt"
-                await send_file(message, ofile)
+        pfunc = partial(set_personal_setting, pre_event=query, key=data[2])
+        rfunc = partial(update_user_settings, query, data[2], "personal_bot")
+        await wait_for_input(query, pfunc, rfunc)
+    elif data[2] == "doc":
+        update_user_ldata(user_id, "as_doc", not user_dict.get("as_doc", False))
+        await query.answer()
+        await update_user_settings(query, "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "vthumb":
+        handler_dict[user_id] = False
+        await query.answer()
+        buttons = ButtonMaker()
+        buttons.ibutton("Cʟᴏsᴇ", f"wzmlx {user_id} close")
+        await sendMessage(message, from_user.mention, buttons.build_menu(1), thumb_path)
+        await update_user_settings(query, "thumb", "leech")
+    elif data[2] == "show_tds":
+        handler_dict[user_id] = False
+        user_tds = user_dict.get("user_tds", {})
+        msg = f"➲ <b><u>User TD(s) Details</u></b>\n\n<b>Total UserTD(s) :</b> {len(user_tds)}\n\n"
+        for index_no, (drive_name, drive_dict) in enumerate(user_tds.items(), start=1):
+            msg += f"{index_no}: <b>Name:</b> <code>{drive_name}</code>\n"
+            msg += f"  <b>Drive ID:</b> <code>{drive_dict['drive_id']}</code>\n"
+            msg += f"  <b>Index Link:</b> <code>{ind_url if (ind_url := drive_dict['index_link']) else 'Not Provided'}</code>\n\n"
+        try:
+            await sendCustomMsg(user_id, msg)
+            await query.answer("User TDs Successfully Send in your PM", show_alert=True)
+        except Exception:
+            await query.answer(
+                "Start the Bot in PM (Private) and Try Again", show_alert=True
+            )
+        await update_user_settings(query, "user_tds", "mirror")
+    elif data[2] == "dthumb":
+        handler_dict[user_id] = False
+        if await aiopath.exists(thumb_path):
+            await query.answer()
+            await aioremove(thumb_path)
+            update_user_ldata(user_id, "thumb", "")
+            await update_user_settings(query, "thumb", "leech")
+            if DATABASE_URL:
+                await DbManger().update_user_doc(user_id, "thumb")
         else:
-            await send_message(message, msg)
+            await query.answer("Old Settings", show_alert=True)
+            await update_user_settings(query, "leech")
+    elif data[2] == "thumb":
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, data[2], "leech", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(set_thumb, pre_event=query, key=data[2])
+        rfunc = partial(update_user_settings, query, data[2], "leech")
+        await wait_for_input(query, pfunc, rfunc, True)
+    elif data[2] in ["yt_opt", "usess"]:
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, data[2], "universal", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(set_custom, pre_event=query, key=data[2])
+        rfunc = partial(update_user_settings, query, data[2], "universal")
+        await wait_for_input(query, pfunc, rfunc)
+    elif data[2] in ["dyt_opt", "dusess"]:
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(user_id, data[2][1:], "")
+        await update_user_settings(query, data[2][1:], "universal")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] in ["bot_pm", "mediainfo", "save_mode", "td_mode"]:
+        handler_dict[user_id] = False
+        if (
+            data[2] == "save_mode"
+            and not user_dict.get(data[2], False)
+            and not user_dict.get("ldump")
+        ):
+            return await query.answer(
+                "Set User Dump first to Change Save Msg Mode !", show_alert=True
+            )
+        elif (
+            data[2] == "bot_pm"
+            and (config_dict["BOT_PM"] or config_dict["SAFE_MODE"])
+            or data[2] == "mediainfo"
+            and config_dict["SHOW_MEDIAINFO"]
+            or data[2] == "td_mode"
+            and not config_dict["USER_TD_MODE"]
+        ):
+            mode_up = "Disabled" if data[2] == "td_mode" else "Enabled"
+            return await query.answer(
+                f"Force {mode_up}! Can't Alter Settings", show_alert=True
+            )
+        if data[2] == "td_mode" and not user_dict.get("user_tds", False):
+            return await query.answer(
+                "Set UserTD first to Enable User TD Mode !", show_alert=True
+            )
+        await query.answer()
+        update_user_ldata(user_id, data[2], not user_dict.get(data[2], False))
+        if data[2] in ["td_mode"]:
+            await update_user_settings(query, "user_tds", "mirror")
+        else:
+            await update_user_settings(query, "universal")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "split_size":
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, data[2], "leech", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(leech_split_size, pre_event=query)
+        rfunc = partial(update_user_settings, query, data[2], "leech")
+        await wait_for_input(query, pfunc, rfunc)
+    elif data[2] == "dsplit_size":
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(user_id, "split_size", "")
+        await update_user_settings(query, "split_size", "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "esplits":
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(
+            user_id, "equal_splits", not user_dict.get("equal_splits", False)
+        )
+        await update_user_settings(query, "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "mgroup":
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(
+            user_id, "media_group", not user_dict.get("media_group", False)
+        )
+        await update_user_settings(query, "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "autorename":
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(
+            user_id, "autorename", not user_dict.get("autorename", True)
+        )
+        await update_user_settings(query, "leech")
+    elif data[2] == "auto_thumb":
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(
+            user_id, "auto_thumb", not user_dict.get("auto_thumb", config_dict.get("AUTO_THUMBNAIL", False))
+        )
+        await update_user_settings(query, "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    
+    # ============ INTRO SUBTITLE HANDLERS ============
+    elif data[2] == "intro_subtitle":
+        # Show intro subtitle settings menu
+        handler_dict[user_id] = False
+        await query.answer()
+        
+        intro_settings = user_dict.get("intro_subtitle", {})
+        # Force softsub mode for all users
+        intro_settings["mode"] = "softsub"
+        text = intro_settings.get("text", "Not Set")
+        color = intro_settings.get("color", "white")
+        bg_color = intro_settings.get("bg_color", "none")
+        duration = intro_settings.get("duration", 5)
+        font_size = intro_settings.get("font_size", 24)
+        is_enabled = intro_settings.get("enabled", True)
+        
+        buttons = ButtonMaker()
+        msg = f"📝 <b>Intro Subtitle Settings</b>\n\n"
+        msg += f"<b>Status:</b> {'✅ Enabled' if is_enabled else '❌ Disabled'}\n"
+        msg += f"<b>Text:</b> <code>{escape(text[:50])}...</code>" if len(text) > 50 else f"<b>Text:</b> <code>{escape(text)}</code>"
+        msg += f"\n<b>Color:</b> {COLOR_OPTIONS.get(color, color)}"
+        msg += f"\n<b>Background:</b> {BG_COLOR_OPTIONS.get(bg_color, bg_color)}"
+        msg += f"\n<b>Duration:</b> {duration} seconds"
+        msg += f"\n<b>Font Size:</b> {font_size}px"
+        msg += f"\n<b>Mode:</b> Softsub (Default Track)"
+        
+        # Enable/Disable toggle button (only show if text is set)
+        if text != "Not Set":
+            buttons.ibutton(
+                "❌ Disable" if is_enabled else "✅ Enable",
+                f"userset {user_id} intro_toggle",
+            )
+        
+        buttons.ibutton("Set Text", f"userset {user_id} intro_text")
+        buttons.ibutton("Set Color", f"userset {user_id} intro_color")
+        buttons.ibutton("Set Background", f"userset {user_id} intro_bgcolor")
+        buttons.ibutton("Set Duration", f"userset {user_id} intro_duration")
+        buttons.ibutton("Set Font Size", f"userset {user_id} intro_fontsize")
+        
+        if text != "Not Set":
+            buttons.ibutton("🗑️ Reset All", f"userset {user_id} intro_reset", "footer")
+        
+        buttons.ibutton("Back", f"userset {user_id} leech", "footer")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        
+        await editMessage(query.message, msg, buttons.build_menu(2))
+    
+    
+    elif data[2] == "intro_text":
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, "intro_text", "leech", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(set_custom, pre_event=query, key="intro_text")
+        rfunc = partial(update_user_settings, query, "intro_text", "leech")
+        await wait_for_input(query, pfunc, rfunc)
+    
+    elif data[2] == "intro_color":
+        # Show color options
+        handler_dict[user_id] = False
+        await query.answer()
+        
+        buttons = ButtonMaker()
+        msg = "<b>Select Text Color:</b>"
+        
+        for color_key, color_name in COLOR_OPTIONS.items():
+            buttons.ibutton(color_name, f"userset {user_id} intro_setcolor^{color_key}")
+        
+        buttons.ibutton("Back", f"userset {user_id} intro_subtitle", "footer")
+        await editMessage(query.message, msg, buttons.build_menu(2))
+    
+    elif data[2].startswith("intro_setcolor"):
+        # Set specific color
+        handler_dict[user_id] = False
+        await query.answer()
+        
+        color = data[2].split("^")[1]
+        intro_settings = user_dict.get("intro_subtitle", {})
+        intro_settings["color"] = color
+        update_user_ldata(user_id, "intro_subtitle", intro_settings)
+        
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+        
+        await asyncio.sleep(0.5)
+        # Go back to intro subtitle menu
+        await query.message.edit_reply_markup(None)
+        fake_data = ["userset", str(user_id), "intro_subtitle"]
+        query.data = " ".join(fake_data)
+        await edit_user_settings(client, query)
+    
+    elif data[2] == "intro_bgcolor":
+        # Show background color options
+        handler_dict[user_id] = False
+        await query.answer()
+        
+        buttons = ButtonMaker()
+        msg = "<b>Select Background Color:</b>"
+        
+        for color_key, color_name in BG_COLOR_OPTIONS.items():
+            buttons.ibutton(color_name, f"userset {user_id} intro_setbgcolor^{color_key}")
+        
+        buttons.ibutton("Back", f"userset {user_id} intro_subtitle", "footer")
+        await editMessage(query.message, msg, buttons.build_menu(2))
+    
+    elif data[2].startswith("intro_setbgcolor"):
+        # Set specific background color
+        handler_dict[user_id] = False
+        await query.answer()
+        
+        bg_color = data[2].split("^")[1]
+        intro_settings = user_dict.get("intro_subtitle", {})
+        intro_settings["bg_color"] = bg_color
+        update_user_ldata(user_id, "intro_subtitle", intro_settings)
+        
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+        
+        await asyncio.sleep(0.5)
+        # Go back to intro subtitle menu
+        await query.message.edit_reply_markup(None)
+        fake_data = ["userset", str(user_id), "intro_subtitle"]
+        query.data = " ".join(fake_data)
+        await edit_user_settings(client, query)
+    
+    elif data[2] == "intro_duration":
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, "intro_duration", "leech", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(set_custom, pre_event=query, key="intro_duration")
+        rfunc = partial(update_user_settings, query, "intro_duration", "leech")
+        await wait_for_input(query, pfunc, rfunc)
+
+    elif data[2] == "intro_fontsize":
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, "intro_fontsize", "leech", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(set_custom, pre_event=query, key="intro_fontsize")
+        rfunc = partial(update_user_settings, query, "intro_fontsize", "leech")
+        await wait_for_input(query, pfunc, rfunc)
+    
+    elif data[2] == "intro_toggle":
+        # Toggle intro subtitle enabled/disabled without deleting settings
+        handler_dict[user_id] = False
+        intro_settings = user_dict.get("intro_subtitle", {})
+        current = intro_settings.get("enabled", True)
+        intro_settings["enabled"] = not current
+        update_user_ldata(user_id, "intro_subtitle", intro_settings)
+        
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+        
+        status = "enabled ✅" if not current else "disabled ❌"
+        await query.answer(f"Intro subtitle {status}")
+        
+        # Refresh the intro subtitle menu
+        await asyncio.sleep(0.3)
+        await query.message.edit_reply_markup(None)
+        fake_data = ["userset", str(user_id), "intro_subtitle"]
+        query.data = " ".join(fake_data)
+        await edit_user_settings(client, query)
+    
+    elif data[2] == "intro_reset":
+        # Reset all intro subtitle settings
+        handler_dict[user_id] = False
+        await query.answer("Intro subtitle settings reset!")
+        update_user_ldata(user_id, "intro_subtitle", {})
+        
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+        
+        await update_user_settings(query, "leech")
+    
+    elif data[2] in ["sgofile", "sstreamtape", "dgofile", "dstreamtape"]:
+        handler_dict[user_id] = False
+        ddl_dict = user_dict.get("ddl_servers", {})
+        key = data[2][1:]
+        mode, api = ddl_dict.get(key, [False, ""])
+        if data[2][0] == "s":
+            if not mode and api == "":
+                return await query.answer(
+                    "Set API to Enable DDL Server", show_alert=True
+                )
+            ddl_dict[key] = [not mode, api]
+        elif data[2][0] == "d":
+            ddl_dict[key] = [mode, ""]
+        await query.answer()
+        update_user_ldata(user_id, "ddl_servers", ddl_dict)
+        await update_user_settings(query, key, "ddl_servers")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "rcc":
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(query, data[2], "mirror", edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(add_rclone, pre_event=query)
+        rfunc = partial(update_user_settings, query, data[2], "mirror")
+        await wait_for_input(query, pfunc, rfunc, document=True)
+    elif data[2] == "drcc":
+        handler_dict[user_id] = False
+        if await aiopath.exists(rclone_path):
+            await query.answer()
+            await aioremove(rclone_path)
+            update_user_ldata(user_id, "rclone", "")
+            await update_user_settings(query, "rcc", "mirror")
+            if DATABASE_URL:
+                await DbManger().update_user_doc(user_id, "rclone")
+        else:
+            await query.answer("Old Settings", show_alert=True)
+            await update_user_settings(query)
+    elif data[2] in ["ddl_servers", "user_tds", "gofile", "streamtape"]:
+        handler_dict[user_id] = False
+        await query.answer()
+        edit_mode = len(data) == 4
+        await update_user_settings(
+            query,
+            data[2],
+            "mirror" if data[2] in ["ddl_servers", "user_tds"] else "ddl_servers",
+            edit_mode,
+        )
+        if not edit_mode:
+            return
+        pfunc = partial(set_custom, pre_event=query, key=data[2])
+        rfunc = partial(
+            update_user_settings,
+            query,
+            data[2],
+            "mirror" if data[2] in ["ddl_servers", "user_tds"] else "ddl_servers",
+        )
+        await wait_for_input(query, pfunc, rfunc)
+    elif data[2] in [
+        "lprefix",
+        "lsuffix",
+        "lremname_auto",
+        "lremname_regex",
+        "lcaption",
+        "ldump",
+        "mprefix",
+        "msuffix",
+        "mremname",
+        "lmeta",
+        "ffmpeg_cmds",
+    ]:
+        handler_dict[user_id] = False
+        await query.answer()
+        edit_mode = len(data) == 4
+        return_key = "leech" if data[2][0] == "l" or data[2] == "ffmpeg_cmds" else "mirror"
+        await update_user_settings(query, data[2], return_key, edit_mode)
+        if not edit_mode:
+            return
+        pfunc = partial(set_custom, pre_event=query, key=data[2])
+        rfunc = partial(update_user_settings, query, data[2], return_key)
+        await wait_for_input(query, pfunc, rfunc)
+    elif data[2] == "rename_method":
+        handler_dict[user_id] = False
+        await query.answer()
+        current_method = user_dict.get("rename_method", "auto")
+        new_method = "regex" if current_method == "auto" else "auto"
+        update_user_ldata(user_id, "rename_method", new_method)
+        await update_user_settings(query, "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] in [
+        "dlprefix",
+        "dlsuffix",
+        "dlremname_auto",
+        "dlremname_regex",
+        "dlcaption",
+        "dldump",
+        "dlmeta",
+        "dffmpeg_cmds",
+    ]:
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(user_id, data[2][1:], {} if data[2] in ["dldump", "dffmpeg_cmds"] else "")
+        await update_user_settings(query, data[2][1:], "leech")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] in ["dmprefix", "dmsuffix", "dmremname", "duser_tds"]:
+        handler_dict[user_id] = False
+        await query.answer()
+        update_user_ldata(user_id, data[2][1:], {} if data[2] == "duser_tds" else "")
+        if data[2] == "duser_tds":
+            update_user_ldata(user_id, "td_mode", False)
+        await update_user_settings(query, data[2][1:], "mirror")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+    elif data[2] == "back":
+        handler_dict[user_id] = False
+        await query.answer()
+        setting = data[3] if len(data) == 4 else None
+        await update_user_settings(query, setting)
+    elif data[2] == "reset_all":
+        handler_dict[user_id] = False
+        await query.answer()
+        buttons = ButtonMaker()
+        buttons.ibutton("Yes", f"userset {user_id} reset_now y")
+        buttons.ibutton("No", f"userset {user_id} reset_now n")
+        buttons.ibutton("Close", f"userset {user_id} close", "footer")
+        await editMessage(
+            message, "Do you want to Reset Settings ?", buttons.build_menu(2)
+        )
+    elif data[2] == "reset_now":
+        handler_dict[user_id] = False
+        if data[3] == "n":
+            return await update_user_settings(query)
+        if await aiopath.exists(thumb_path):
+            await aioremove(thumb_path)
+        if await aiopath.exists(rclone_path):
+            await aioremove(rclone_path)
+        await query.answer()
+        update_user_ldata(user_id, None, None)
+        await update_user_settings(query)
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+            await DbManger().update_user_doc(user_id, "thumb")
+            await DbManger().update_user_doc(user_id, "rclone")
+    elif data[2] == "user_del":
+        user_id = int(data[3])
+        await query.answer()
+        thumb_path = f"Thumbnails/{user_id}.jpg"
+        rclone_path = f"rclone/{user_id}.conf"
+        if await aiopath.exists(thumb_path):
+            await aioremove(thumb_path)
+        if await aiopath.exists(rclone_path):
+            await aioremove(rclone_path)
+        update_user_ldata(user_id, None, None)
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+            await DbManger().update_user_doc(user_id, "thumb")
+            await DbManger().update_user_doc(user_id, "rclone")
+        await editMessage(message, f"Data Reset for {user_id}")
     else:
-        await send_message(message, "No users data!")
+        handler_dict[user_id] = False
+        await query.answer()
+        await deleteMessage(message.reply_to_message)
+        await deleteMessage(message)
+
+
+# Add this function HERE (around line 2448)
+async def set_thumbnail_by_reply(client, message):
+    user_id = message.from_user.id
+    reply_to = message.reply_to_message
+    
+    if reply_to is None:
+        await sendMessage(message, "❌ Reply to a photo to set it as thumbnail!")
+        return
+        
+    if not reply_to.photo:
+        await sendMessage(message, "❌ Please reply to a photo!")
+        return
+    
+    try:
+        thumb_path = f"Thumbnails/{user_id}.jpg"
+        
+        # Download and save the thumbnail
+        await reply_to.download(file_name=thumb_path)
+        
+        # Update user data
+        update_user_ldata(user_id, "thumb", thumb_path)
+        
+        # Update database if enabled
+        if DATABASE_URL:
+            await DbManger().update_user_doc(user_id, "thumb")
+        
+        await sendMessage(message, "✅ Thumbnail set successfully!")
+        
+    except Exception as e:
+        LOGGER.error(f"Error setting thumbnail: {e}")
+        await sendMessage(message, f"❌ Error setting thumbnail: {str(e)}")
+
+async def send_users_settings(client, message):
+    text = message.text.split(maxsplit=1)
+    userid = text[1] if len(text) > 1 else None
+    if userid and not userid.isdigit():
+        userid = None
+    elif (
+        (reply_to := message.reply_to_message)
+        and reply_to.from_user
+        and not reply_to.from_user.is_bot
+    ):
+        userid = reply_to.from_user.id
+    if not userid:
+        msg = f"<u><b>Total Users / Chats Data Saved :</b> {len(user_data)}</u>"
+        buttons = ButtonMaker()
+        buttons.ibutton("Close", f"userset {message.from_user.id} close")
+        button = buttons.build_menu(1)
+        for user, data in user_data.items():
+            msg += f"\n\n<code>{user}</code>:"
+            if data:
+                for key, value in data.items():
+                    if key in ["token", "time", "ddl_servers", "usess", "personal_bot_token"]:
+                        continue
+                    msg += f"\n<b>{key}</b>: <code>{escape(str(value))}</code>"
+            else:
+                msg += "\nUser's Data is Empty!"
+        if len(msg.encode()) > 4000:
+            with BytesIO(str.encode(msg)) as ofile:
+                ofile.name = "users_settings.txt"
+                await sendFile(message, ofile)
+        else:
+            await sendMessage(message, msg, button)
+    elif int(userid) in user_data:
+        msg = f'{(await user_info(userid)).mention(style="html")} ( <code>{userid}</code> ):'
+        if data := user_data[int(userid)]:
+            buttons = ButtonMaker()
+            buttons.ibutton(
+                "Delete Data", f"userset {message.from_user.id} user_del {userid}"
+            )
+            buttons.ibutton("Close", f"userset {message.from_user.id} close")
+            button = buttons.build_menu(1)
+            for key, value in data.items():
+                if key in ["token", "time", "ddl_servers", "usess", "personal_bot_token"]:
+                    continue
+                msg += f"\n<b>{key}</b>: <code>{escape(str(value))}</code>"
+        else:
+            msg += "\nThis User has not Saved anything."
+            button = None
+        await sendMessage(message, msg, button)
+    else:
+        await sendMessage(message, f"{userid} have not saved anything..")
+
+
+# ============ /aux AUTORENAME COMMAND ============
+@new_task
+async def autorename_cmd(client, message):
+    """
+    /aux [template] — Set AutoRename template directly.
+    /aux            — Show current template.
+    /aux off        — Clear the saved template.
+
+    Example: /aux [animeshrine.xyz] S0{season}E{episode} Dr. Stone {quality}.mkv
+    """
+    user_id = message.from_user.id
+    user_dict = user_data.get(user_id, {})
+    args = message.text.split(maxsplit=1)
+
+    # --- No argument: show current template ---
+    if len(args) == 1:
+        current = user_dict.get(
+            "lremname_auto",
+            config_dict.get("LEECH_FILENAME_REMNAME_AUTO", ""),
+        )
+        if current:
+            await sendMessage(
+                message,
+                f"📝 <b>Current AutoRename Template:</b>\n"
+                f"<code>{escape(current)}</code>\n\n"
+                f"<b>Usage:</b> <code>/aux [template]</code>\n"
+                f"<b>Clear:</b> <code>/aux off</code>",
+            )
+        else:
+            await sendMessage(
+                message,
+                "📝 <b>No AutoRename template set.</b>\n\n"
+                "<b>Usage:</b> <code>/aux [animeshrine.xyz] S0{{season}}E{{episode}} Dr. Stone {{quality}}.mkv</code>\n\n"
+                "<b>Available tags:</b>\n"
+                "  <code>{title}</code> — parsed title\n"
+                "  <code>{season}</code> — season number\n"
+                "  <code>{episode}</code> — episode number\n"
+                "  <code>{quality}</code> — video quality (e.g. 1080p)\n"
+                "  <code>{codec}</code> — video codec\n"
+                "  <code>{audio}</code> — audio codec\n"
+                "  <code>{chapter}</code> — chapter number\n"
+                "  <code>{episode:+N}</code> — episode with offset",
+            )
+        return
+
+    template = args[1].strip()
+
+    # --- Clear template ---
+    if template.lower() in ("off", "clear", "reset", "del", "none"):
+        update_user_ldata(user_id, "lremname_auto", "")
+        if DATABASE_URL:
+            await DbManger().update_user_data(user_id)
+        await sendMessage(message, "✅ <b>AutoRename template cleared!</b>")
+        return
+
+    # --- Save new template ---
+    update_user_ldata(user_id, "lremname_auto", template)
+    if DATABASE_URL:
+        await DbManger().update_user_data(user_id)
+
+    await sendMessage(
+        message,
+        f"✅ <b>AutoRename template saved!</b>\n\n"
+        f"<code>{escape(template)}</code>",
+    )
+
+
+bot.add_handler(
+    MessageHandler(
+        send_users_settings,
+        filters=command(BotCommands.UsersCommand) & CustomFilters.sudo,
+    )
+)
+bot.add_handler(
+    MessageHandler(
+        user_settings,
+        filters=command(BotCommands.UserSetCommand) & CustomFilters.authorized_uset,
+    )
+)
+bot.add_handler(
+    MessageHandler(
+        set_thumbnail_by_reply,
+        filters=command(BotCommands.ThumbnailCommand) & CustomFilters.authorized,
+    )
+)
+bot.add_handler(
+    MessageHandler(
+        autorename_cmd,
+        filters=command(BotCommands.AutoRenameCommand) & CustomFilters.authorized,
+    )
+)
+bot.add_handler(CallbackQueryHandler(edit_user_settings, filters=regex("^userset")))
+
+# Register global message handler for user settings input
+bot.add_handler(
+    MessageHandler(
+        global_settings_input_handler,
+        filters=text | photo | document  # Catches text, photos, and documents
+    ),
+    group=-2  # Lower than default to let other handlers run first
+)
+LOGGER.info("[USER_SETTINGS] Global settings input handler registered at group=-2")

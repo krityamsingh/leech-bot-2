@@ -1,11 +1,15 @@
-from asyncio import Event, wait_for, TimeoutError as AsyncTimeout
-from os.path import exists as path_exists
-
+#!/usr/bin/env python3
+from time import time
 from aiofiles.os import remove as aioremove
+from asyncio import sleep, wrap_future, Lock
+from functools import partial
+from cryptography.fernet import Fernet
+
 from pyrogram import Client
+from pyrogram.types import ForceReply
 from pyrogram.enums import ChatType
-from pyrogram.filters import create, user, text, private
-from pyrogram.handlers import CallbackQueryHandler, MessageHandler
+from pyrogram.filters import command, user, text, private
+from pyrogram.handlers import MessageHandler
 from pyrogram.errors import (
     SessionPasswordNeeded,
     FloodWait,
@@ -13,350 +17,283 @@ from pyrogram.errors import (
     ApiIdInvalid,
     PhoneCodeInvalid,
     PhoneCodeExpired,
+    UsernameNotOccupied,
+    ChatAdminRequired,
+    PeerIdInvalid,
 )
 
-from ..core.tg_client import TgClient
-from ..core.config_manager import Config
-from ..helper.ext_utils.bot_utils import new_task
-from ..helper.ext_utils.status_utils import get_readable_time
-from ..helper.telegram_helper.button_build import ButtonMaker
-from ..helper.telegram_helper.message_utils import (
-    send_message,
-    edit_message,
-    delete_message,
+from bot import bot, LOGGER, bot_cache, bot_name
+from bot.helper.telegram_helper.button_build import ButtonMaker
+from bot.helper.ext_utils.bot_utils import new_thread, new_task
+from bot.helper.telegram_helper.message_utils import (
+    sendMessage,
+    editMessage,
+    deleteMessage,
+    sendFile,
+    sendCustomMsg,
 )
+from bot.helper.telegram_helper.filters import CustomFilters
 
-_STOP = "gensess_stop"
-_TIMEOUT = 120
-
-
-def _stop_filter(uid):
-    async def _check(_, __, update):
-        return update.data == _STOP and update.from_user.id == uid
-
-    return create(_check)
-
-
-async def _safe_disconnect(client):
-    try:
-        await client.disconnect()
-    except ConnectionError:
-        pass
-
-
-def _stop_btns():
-    btns = ButtonMaker()
-    btns.data_button("Cancel Process", data=_STOP)
-    return btns.build_menu(1)
-
-
-def _header(user_name):
-    return (
-        "⌬ <u><i><b>Pyrogram String Session Generator</b></i></u>\n│\n"
-        f"│ <b>User</b> → <b>{user_name}</b>!"
-    )
-
-
-def _collected(api_id=None, api_hash=None, phone=None):
-    parts = []
-    if api_id is not None:
-        parts.append(f"┠ <b>API_ID</b> → <code>{api_id}</code>")
-    if api_hash is not None:
-        masked = api_hash[:4] + "*" * (len(api_hash) - 4)
-        parts.append(f"┠ <b>API_HASH</b> → <code>{masked}</code>")
-    if phone is not None:
-        parts.append(f"┠ <b>Phone</b> → <code>{phone}</code>")
-    return "\n".join(parts) if parts else ""
-
-
-def _stop_msg(h, c):
-    return f"{h}\n┃\n" + (
-        f"{c}\n┃\n┖ <b>Process Stopped.</b>" if c else "┖ <b>Process Stopped.</b>"
-    )
-
-
-def _timeout_msg(h, c):
-    return f"{h}\n┃\n" + (
-        f"{c}\n┃\n┃ <b>Timed Out!</b>\n┖ <i>Process Stopped.</i>"
-        if c
-        else "┃ <b>Timed Out!</b>\n┖ <i>Process Stopped.</i>"
-    )
-
-
-def _error_msg(h, c, err):
-    return f"{h}\n┃\n" + (f"{c}\n┃\n┖ {err}" if c else f"┖ {err}")
-
-
-async def _invoke(user_id, timeout=_TIMEOUT):
-    event = Event()
-    result = [None]
-
-    async def _on_text(_, message):
-        await delete_message(message)
-        result[0] = message.text or ""
-        event.set()
-
-    async def _on_stop(_, query):
-        await query.answer()
-        result[0] = _STOP
-        event.set()
-
-    h1 = TgClient.bot.add_handler(
-        MessageHandler(_on_text, filters=user(user_id) & text & private),
-        group=-1,
-    )
-    h2 = TgClient.bot.add_handler(
-        CallbackQueryHandler(_on_stop, filters=_stop_filter(user_id)),
-        group=-1,
-    )
-    try:
-        await wait_for(event.wait(), timeout)
-    except AsyncTimeout:
-        result[0] = None
-    finally:
-        TgClient.bot.remove_handler(*h1)
-        TgClient.bot.remove_handler(*h2)
-
-    return result[0]
-
-
-async def _stop_or_timeout(value, msg, h, c, pyro_client=None):
-    if value is None:
-        await edit_message(msg, _timeout_msg(h, c))
-        if pyro_client:
-            await _safe_disconnect(pyro_client)
-        return True
-    if value == _STOP:
-        await edit_message(msg, _stop_msg(h, c))
-        if pyro_client:
-            await _safe_disconnect(pyro_client)
-        return True
-    return False
+session_dict = {}
+session_lock = Lock()
+isStop = False
 
 
 @new_task
-async def gen_pyro_string(_, message):
-    if message.chat.type != ChatType.PRIVATE:
+async def genPyroString(client, message):
+    global isStop
+    session_dict.clear()
+    sess_msg = await sendMessage(
+        message,
+        """⌬ <u><i><b>Pyrogram String Session Generator</b></i></u>
+ 
+<i>Send your <code>API_ID</code> or <code>APP_ID</code>.
+Get from https://my.telegram.org</i>. 
+<b>Timeout:</b> 120s
+
+<i>Send /stop to Stop Process</i>""",
+    )
+    session_dict["message"] = sess_msg
+    await wrap_future(invoke(client, message, "API_ID"))
+    if isStop:
         return
-
-    user_id = message.from_user.id
-    user_name = message.from_user.first_name or "User"
-    btns = _stop_btns()
-    h = _header(user_name)
-
-    api_id = Config.TELEGRAM_API
-    api_hash = Config.TELEGRAM_HASH
-
-    if not api_id or not api_hash:
-        sess_msg = await send_message(
-            message,
-            f"{h}\n┃\n"
-            "┃ <i>Send your <code>API_ID</code> (also known as <code>APP_ID</code>).</i>\n"
-            "┃ <i>Get it from <a href='https://my.telegram.org'>my.telegram.org</a>.</i>\n"
-            "┃\n"
-            f"┖ <b>Timeout:</b> <code>{get_readable_time(_TIMEOUT)}</code>",
-            btns,
-        )
-
-        api_id = await _invoke(user_id)
-        if await _stop_or_timeout(api_id, sess_msg, h, ""):
-            return
-
+    async with session_lock:
         try:
-            api_id = int(api_id)
-        except ValueError:
-            return await edit_message(
-                sess_msg, _error_msg(h, "", "<i><code>APP_ID</code> is Invalid.</i>")
+            api_id = int(session_dict["API_ID"])
+        except Exception:
+            return await editMessage(
+                sess_msg,
+                "<i><code>APP_ID</code> is Invalid.</i>\n\n ⌬ <b>Process Stopped.</b>",
             )
+    await sleep(1.5)
+    await editMessage(
+        sess_msg,
+        """⌬ <u><i><b>Pyrogram String Session Generator</b></i></u>
+ 
+<i>Send your <code>API_HASH</code>. Get from https://my.telegram.org</i>.
+<b>Timeout:</b> 120s
 
-        c = _collected(api_id=api_id)
-        await edit_message(
+<i>Send /stop to Stop Process</i>""",
+    )
+    await wrap_future(invoke(client, message, "API_HASH"))
+    if isStop:
+        return
+    async with session_lock:
+        api_hash = session_dict["API_HASH"]
+    if len(api_hash) <= 30:
+        return await editMessage(
             sess_msg,
-            f"{h}\n\n{c}\n\n"
-            "┃ <i>Send your <code>API_HASH</code>.</i>\n"
-            "┃ <i>Get it from <a href='https://my.telegram.org'>my.telegram.org</a>.</i>\n"
-            "┃\n"
-            f"┖ <b>Timeout:</b> <code>{get_readable_time(_TIMEOUT)}</code>",
-            btns,
+            "<i><code>API_HASH</code> is Invalid.</i>\n\n ⌬ <b>Process Stopped.</b>",
         )
-
-        api_hash = await _invoke(user_id)
-        if await _stop_or_timeout(api_hash, sess_msg, h, c):
-            return
-        if len(api_hash) <= 30:
-            return await edit_message(
-                sess_msg, _error_msg(h, c, "<i><code>API_HASH</code> is Invalid.</i>")
-            )
-
-        c = _collected(api_id=api_id, api_hash=api_hash)
-    else:
-        sess_msg = await send_message(
-            message,
-            f"{h}\n┃\n"
-            f"┃ <i>Using <b>API_ID</b> &amp; <b>API_HASH</b> from bot config.</i>\n"
-            "┃\n"
-            f"┖ <b>Timeout:</b> <code>{get_readable_time(_TIMEOUT)}</code>",
-            btns,
-        )
-        c = _collected(api_id=api_id, api_hash=api_hash)
-
     while True:
-        await edit_message(
+        await sleep(1.5)
+        await editMessage(
             sess_msg,
-            f"{h}\n┃\n{c}\n┃\n"
-            "┃ <i>Send your phone number in International Format.</i>\n"
-            "┖ <b>Example:</b> <code>+14154566376</code>",
-            btns,
+            """⌬ <u><i><b>Pyrogram String Session Generator</b></i></u>
+ 
+<i>Send your Telegram Account's Phone number in International Format ( Including Country Code ). <b>Example :</b> +14154566376</i>.
+<b>Timeout:</b> 120s
+
+<i>Send /stop to Stop Process</i>""",
         )
-
-        phone_no = await _invoke(user_id)
-        if await _stop_or_timeout(phone_no, sess_msg, h, c):
+        await wrap_future(invoke(client, message, "PHONE_NO"))
+        if isStop:
             return
-
-        c_phone = _collected(api_id=api_id, api_hash=api_hash, phone=phone_no)
-        await edit_message(
+        await editMessage(
             sess_msg,
-            f"{h}\n┃\n{c_phone}\n┃\n"
-            f"┃ Is <code>{phone_no}</code> correct?\n"
-            "┖ <b>Send:</b> <code>y</code> / <code>yes</code> | <code>n</code> / <code>no</code>",
-            btns,
+            f"⌬ <b>Verification Confirmation:</b>\n\n <i>Is {session_dict['PHONE_NO']} correct? (y/n/yes/no):</i> \n\n<b>Send y/yes (Yes) | n/no (No)</b>",
         )
-
-        confirm = await _invoke(user_id)
-        if await _stop_or_timeout(confirm, sess_msg, h, c_phone):
+        await wrap_future(invoke(client, message, "CONFIRM_PHN"))
+        if isStop:
             return
-        if confirm.lower() in ("y", "yes"):
-            c = c_phone
-            break
-
+        async with session_lock:
+            if session_dict["CONFIRM_PHN"].lower() in ["y", "yes"]:
+                break
     try:
         pyro_client = Client(
-            f"WZML-X-{user_id}",
-            api_id=api_id,
-            api_hash=api_hash,
-            workdir="/usr/src/app",
+            f"WZML-X-{message.from_user.id}", api_id=api_id, api_hash=api_hash
         )
     except Exception as e:
-        return await edit_message(
-            sess_msg, _error_msg(h, c, f"<b>Client Error:</b> <i>{e}</i>")
-        )
-
+        await editMessage(sess_msg, f"<b>Client Error:</b> {str(e)}")
+        return
     try:
         await pyro_client.connect()
     except ConnectionError:
-        await _safe_disconnect(pyro_client)
+        await pyro_client.disconnect()
         await pyro_client.connect()
-
     try:
-        user_code = await pyro_client.send_code(phone_no)
+        user_code = await pyro_client.send_code(session_dict["PHONE_NO"])
+        await sleep(1.5)
     except FloodWait as e:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(
+        return await editMessage(
             sess_msg,
-            _error_msg(
-                h,
-                c,
-                f"<b>FloodWait:</b> <i>Retry after {get_readable_time(e.value)}.</i>",
-            ),
+            f"<b>Floodwait of {e.value} Seconds. Retry Again</b>\n\n ⌬ <b>Process Stopped.</b>",
         )
     except ApiIdInvalid:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(
+        return await editMessage(
             sess_msg,
-            _error_msg(
-                h,
-                c,
-                "<i><code>API_ID</code> and <code>API_HASH</code> are Invalid.</i>",
-            ),
+            "<b>API_ID and API_HASH are Invalid. Retry Again</b>\n\n ⌬ <b>Process Stopped.</b>",
         )
     except PhoneNumberInvalid:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(
-            sess_msg, _error_msg(h, c, "<i>Phone Number is Invalid.</i>")
-        )
-
-    await edit_message(
-        sess_msg,
-        f"{h}\n┃\n{c}\n┃\n"
-        "┃ <i>OTP sent to your Phone Number.</i>\n"
-        "┃ <i>Enter in <code>1 2 3 4 5</code> format. (Space in between)</i>\n"
-        "┃\n"
-        f"┖ <b>Timeout:</b> <code>{get_readable_time(_TIMEOUT)}</code>",
-        btns,
-    )
-
-    otp_str = await _invoke(user_id)
-    if await _stop_or_timeout(otp_str, sess_msg, h, c, pyro_client):
-        return
-
-    otp = " ".join(str(otp_str).split())
-
-    try:
-        if not pyro_client.is_connected:
-            await pyro_client.connect()
-        await pyro_client.sign_in(phone_no, user_code.phone_code_hash, phone_code=otp)
-    except PhoneCodeInvalid:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(sess_msg, _error_msg(h, c, "<i>OTP is Invalid.</i>"))
-    except PhoneCodeExpired:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(sess_msg, _error_msg(h, c, "<i>OTP has Expired.</i>"))
-    except SessionPasswordNeeded:
-        hint = await pyro_client.get_password_hint()
-        await edit_message(
+        return await editMessage(
             sess_msg,
-            f"{h}\n┃\n{c}\n┃\n"
-            "┃ <i>Account is protected with <b>Two-Step Verification</b>.</i>\n"
-            f"┃ <b>Hint:</b> <i>{hint}</i>\n"
-            "┃\n"
-            "┖ <i>Send your Password Now.</i>",
-            btns,
+            "<b>Phone Number is Invalid. Retry Again</b>\n\n ⌬ <b>Process Stopped.</b>",
         )
+    await sleep(1.5)
+    await editMessage(
+        sess_msg,
+        """⌬ <u><i><b>Pyrogram String Session Generator</b></i></u>
+ 
+<i>OTP has been sent to your Phone Number, Enter OTP in <code>1 2 3 4 5</code> format. ( Space between each Digits )</i>
+<b>If any error or bot not responded, Retry Again.</b>
+<b>Timeout:</b> 120s
 
-        password = await _invoke(user_id)
-        if await _stop_or_timeout(password, sess_msg, h, c, pyro_client):
+<i>Send /stop to Stop Process</i>""",
+    )
+    await wrap_future(invoke(client, message, "OTP"))
+    if isStop:
+        return
+    async with session_lock:
+        otp = " ".join(str(session_dict["OTP"]))
+    try:
+        await pyro_client.sign_in(
+            session_dict["PHONE_NO"], user_code.phone_code_hash, phone_code=otp
+        )
+    except PhoneCodeInvalid:
+        return await editMessage(
+            sess_msg, "<i>Input OTP is Invalid.</i>\n\n ⌬ <b>Process Stopped.</b>"
+        )
+    except PhoneCodeExpired:
+        return await editMessage(
+            sess_msg, "<i> Input OTP has Expired.</i>\n\n ⌬ <b>Process Stopped.</b>"
+        )
+    except SessionPasswordNeeded:
+        await sleep(1.5)
+        await editMessage(
+            sess_msg,
+            f"""⌬ <u><i><b>Pyrogram String Session Generator</b></i></u>
+ 
+ <i>Account is being Protected via <b>Two-Step Verification.</b> Send your Password below.</i>
+ <b>Timeout:</b> 120s
+ 
+ <b>Password Hint</b> : {await pyro_client.get_password_hint()}
+ 
+ <i>Send /stop to Stop Process</i>""",
+        )
+        await wrap_future(invoke(client, message, "TWO_STEP_PASS"))
+        if isStop:
             return
-
+        async with session_lock:
+            password = session_dict["TWO_STEP_PASS"].strip()
         try:
-            await pyro_client.check_password(password.strip())
+            await pyro_client.check_password(password)
         except Exception as e:
-            await _safe_disconnect(pyro_client)
-            return await edit_message(
-                sess_msg, _error_msg(h, c, f"<b>Password Error:</b> <i>{e}</i>")
-            )
+            return await editMessage(sess_msg, f"<b>Password Check Error:</b> {str(e)}")
     except Exception as e:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(
-            sess_msg, _error_msg(h, c, f"<b>Sign In Error:</b> <i>{e}</i>")
-        )
-
+        return await editMessage(sess_msg, f"<b>Sign In Error:</b> {str(e)}")
     try:
         session_string = await pyro_client.export_session_string()
         await pyro_client.send_message(
-            "me",
-            f"⌬ <b><u>Pyrogram Session Generated</u></b>\n\n"
-            f"<code>{session_string}</code>\n\n"
-            f"<b>Via <a href='https://github.com/SilentDemonSD/WZML-X'>WZML-X</a> [ @WZML_X ]</b>",
+            "self",
+            f"⌬ <b><u>Pyrogram Session Generated :</u></b>\n\n<code>{session_string}</code>\n\n<b>Via <a href='https://github.com/weebzone/WZML-X'>WZML-X</a> [ @WZML_X ]</b>",
             disable_web_page_preview=True,
         )
-        await _safe_disconnect(pyro_client)
-        await edit_message(
+        await pyro_client.disconnect()
+        await editMessage(
             sess_msg,
-            f"{h}\n┃\n{c}\n┃\n"
-            "┠  <b>String Session Generated Successfully!</b>\n"
-            "┃\n"
-            "┖ <i>Check your <b>Saved Messages</b>.</i>",
+            "⌬ <u><i><b>Pyrogram String Session Generator</b></i></u> \n\n➲ <b>String Session is Successfully Generated ( Saved Messages ).</b>",
         )
     except Exception as e:
-        await _safe_disconnect(pyro_client)
-        return await edit_message(
-            sess_msg, _error_msg(h, c, f"<b>Export Error:</b> <i>{e}</i>")
-        )
+        return await editMessage(sess_msg, f"<b>Export Session Error:</b> {str(e)}")
+    try:
+        await aioremove(f"WZML-X-{message.from_user.id}.session")
+        await aioremove(f"WZML-X-{message.from_user.id}.session-journal")
+    except Exception:
+        pass
 
-    for ext in ("session", "session-journal"):
-        path = f"WZML-X-{user_id}.{ext}"
-        if path_exists(path):
-            try:
-                await aioremove(path)
-            except Exception:
-                pass
+
+async def set_details(_, message, newkey):
+    global isStop
+    value = message.text
+    await deleteMessage(message)
+    async with session_lock:
+        session_dict[newkey] = value
+    if value.lower() == "/stop":
+        isStop = True
+        return await editMessage(session_dict["message"], "⌬ <b>Process Stopped</b>")
+
+
+@new_thread
+async def invoke(client, message, key):
+    global isStop
+    user_id = message.from_user.id
+    start_time = time()
+    handler = client.add_handler(
+        MessageHandler(
+            partial(set_details, newkey=key), filters=user(user_id) & text & private
+        ),
+        group=-1,
+    )
+    while not bool(session_dict.get(key)):
+        await sleep(0.5)
+        if time() - start_time > 120:
+            await editMessage(message, "⌬ <b>Process Stopped</b>")
+            isStop = True
+            break
+    client.remove_handler(*handler)
+
+
+@new_thread
+async def get_decrypt_key(client, message):
+    user_id = message.from_user.id
+    msg_id = message.id
+    grp_prompt = None
+    if message.chat.type != ChatType.PRIVATE:
+        btn = ButtonMaker()
+        btn.ubutton("🔑 Unlock Session", f"https://t.me/{bot_name}")
+        grp_prompt = await sendMessage(
+            message,
+            "<i>User Session (Pyrogram V2 Session) Access of your Account is needed for Message to Access, it can't be Accessed by Bot and Session</i>",
+            btn.build_menu(1),
+        )
+    prompt = await sendCustomMsg(
+        user_id,
+        "<b><u>DECRYPTION:</u></b>\n<i>• This Value is not stored anywhere, so you need to provide it everytime...\n\n</i><b><i>Send your Decrypt Key 🔑 ..</i></b>\n\n<b>Timeout:</b> 60s",
+    )
+
+    bot_cache[msg_id] = [True, "", False]
+
+    async def set_details(_, message):
+        await deleteMessage(message)
+        bot_cache[msg_id] = [False, message.text, False]
+
+    start_time = time()
+    handler = client.add_handler(
+        MessageHandler(set_details, filters=user(user_id) & text & private), group=-1
+    )
+    while bot_cache[msg_id][0]:
+        await sleep(0.5)
+        if time() - start_time > 60:
+            bot_cache[msg_id][0] = False
+            await editMessage(prompt, "<b>Decryption Key TimeOut.. Try Again</b>")
+            bot_cache[msg_id][2] = True
+    client.remove_handler(*handler)
+
+    _, key, is_cancelled = bot_cache[msg_id]
+    if is_cancelled:
+        await editMessage(prompt, "<b>Decrypt Key Invoke Cancelled</b>")
+        if grp_prompt:
+            await editMessage(grp_prompt, "<b>Task Cancelled!</b>")
+    elif key:
+        await editMessage(prompt, "<b>✅️ Decrypt Key Accepted!</b>")
+        if grp_prompt:
+            await deleteMessage(grp_prompt)
+    del bot_cache[msg_id]
+    return Fernet(key), is_cancelled
+
+
+bot.add_handler(
+    MessageHandler(
+        genPyroString, filters=command("exportsession") & private & CustomFilters.sudo
+    )
+)

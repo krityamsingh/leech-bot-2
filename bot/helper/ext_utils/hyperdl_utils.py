@@ -90,6 +90,7 @@ class HypertgDownload(HypertgTransfer):
         self._cdn_info = {}
         self._cdn_sessions = {}
         self._no_access_dump = set()
+        self._ref_logged = set()  # idxs whose fallback was already logged
         self._coord_handle = None
         self._coord_budget = 0  # 0 = uncapped (no coordinator active)
 
@@ -212,16 +213,19 @@ class HypertgDownload(HypertgTransfer):
         if fid := self._message_fid():
             cname = getattr(getattr(client, "me", None), "username", None)
             if access_denied:
-                LOGGER.warning(
-                    f"HypertgDL {cname}: using source FileId (no dump_chat "
-                    f"access). Add this bot as admin to {self.dump_chat} "
-                    f"for full multi-client speed."
-                )
-            else:
+                if idx not in self._ref_logged:
+                    LOGGER.warning(
+                        f"HypertgDL {cname}: using source FileId (no dump_chat "
+                        f"access). Add this bot as admin to {self.dump_chat} "
+                        f"for full multi-client speed."
+                    )
+                    self._ref_logged.add(idx)
+            elif idx not in self._ref_logged:
                 LOGGER.info(
                     "HypertgDL using source file reference for "
                     f"{cname or 'client'} after refetch failed: {last_err}"
                 )
+                self._ref_logged.add(idx)
             self._ref_put(idx, fid)
             return fid
 
@@ -908,9 +912,16 @@ class HypertgDownload(HypertgTransfer):
                 )
                 LOGGER.error(
                     f"HypertgDL {len(all_failed_offsets)} offsets still failed "
-                    f"after {max_retries} retry rounds — file may be incomplete"
-                    f"{bad_detail}"
+                    f"after {max_retries} retry rounds — file would be corrupt "
+                    f"(zero-holes){bad_detail}. Returning None so the caller "
+                    f"falls back to standard single-stream download (slow but "
+                    f"correct) instead of uploading a corrupt file."
                 )
+                try:
+                    await to_thread(os.remove, final)
+                except OSError:
+                    pass
+                return None
 
             return final
         except FloodWait:

@@ -1,4 +1,4 @@
-config.env
+# config.env  -- uncomment to hide from git if credentials are in Railway env vars
 *.pyc
 data*
 .vscode

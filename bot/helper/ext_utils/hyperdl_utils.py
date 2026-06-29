@@ -91,6 +91,7 @@ class HypertgDownload(HypertgTransfer):
         self._cdn_sessions = {}
         self._no_access_dump = set()
         self._ref_logged = set()  # idxs whose fallback was already logged
+        self._real_ref_clients = set()  # idxs that got a dump_chat-scoped ref
         self._coord_handle = None
         self._coord_budget = 0  # 0 = uncapped (no coordinator active)
 
@@ -192,6 +193,7 @@ class HypertgDownload(HypertgTransfer):
                     raise ValueError(f"no file_id in media from msg {self.message.id}")
                 fid = FileId.decode(fid_str)
                 self._ref_put(idx, fid)
+                self._real_ref_clients.add(idx)
                 return fid
             except Exception as e:
                 if access_errors and isinstance(e, access_errors):
@@ -647,6 +649,7 @@ class HypertgDownload(HypertgTransfer):
 
         fid_map = {}
         bad_ref_clients = []
+        fallback_clients = []  # got only a source-FileId fallback (will fail GetFile)
         ref_tasks = {
             ci: create_task(self._fetch_ref(ci, self.clients[ci])) for ci in cidx
         }
@@ -660,7 +663,38 @@ class HypertgDownload(HypertgTransfer):
                 )
             else:
                 fid_map[ci] = result
-                LOGGER.info(f"HypertgDL ref OK: client={cname} ci={ci}")
+                if ci in self._real_ref_clients:
+                    LOGGER.info(f"HypertgDL ref OK: client={cname} ci={ci}")
+                else:
+                    fallback_clients.append(ci)
+                    LOGGER.info(
+                        f"HypertgDL ref FALLBACK: client={cname} ci={ci} "
+                        f"(source FileId only — this client cannot resolve the "
+                        f"source chat; will not be assigned parallel parts)"
+                    )
+
+        # Prefer clients with a real dump_chat-scoped ref. Clients that only
+        # got a source-FileId fallback fail every GetFile request in the
+        # pipeline (the file_reference isn't valid for their session), which
+        # triggers a retry storm that drags the whole download down. Only keep
+        # fallback clients if NO real-ref client exists (so single-client
+        # fallback still works).
+        real_clients = [ci for ci in fid_map if ci in self._real_ref_clients]
+        if real_clients:
+            for ci in fallback_clients:
+                bad_ref_clients.append(ci)
+                del fid_map[ci]
+            LOGGER.info(
+                f"HypertgDL using {len(real_clients)} real-ref client(s); "
+                f"excluded {len(fallback_clients)} fallback-only client(s) "
+                f"to avoid retry storm"
+            )
+        elif fallback_clients:
+            LOGGER.warning(
+                f"HypertgDL NO real-ref clients — keeping {len(fallback_clients)} "
+                f"fallback client(s). These may fail; download will fall back to "
+                f"standard single-stream if so."
+            )
 
         if not fid_map:
             LOGGER.error("HypertgDL ref fail: no selected client could resolve media")
@@ -786,6 +820,7 @@ class HypertgDownload(HypertgTransfer):
             max_retries = 4
             retry_round = 0
             all_bad_mode = False
+            unique_assigned = set(assigns)
             while all_failed_offsets:
                 retry_round += 1
 
@@ -804,7 +839,19 @@ class HypertgDownload(HypertgTransfer):
                     good_bots = [fallback]
                     all_bad_mode = True
 
-                if retry_round > max_retries and not all_bad_mode:
+                # Early fallback: if the majority of assigned bots failed
+                # after round 1, further rounds won't help — bail out so
+                # the caller falls back to standard single-stream faster.
+                if retry_round == 1 and len(bad_bots) >= len(unique_assigned) * 0.6:
+                    LOGGER.warning(
+                        f"HypertgDL early fallback: {len(bad_bots)}/{len(unique_assigned)} "
+                        f"bots failed after round 1 — abandoning hyper download"
+                    )
+                    break
+
+                # Cap retries by surviving bots: if only 1-2 good bots remain,
+                # extra rounds just retry on the same exhausted bots.
+                if retry_round > max(1, min(max_retries, len(good_bots))):
                     break
 
                 range_buckets = {i: [] for i in range(len(ranges))}

@@ -1,3 +1,5 @@
+import time as _time_mod
+
 from asyncio import (
     CancelledError,
     Lock,
@@ -169,23 +171,43 @@ class HypertgUpload(HypertgTransfer):
                     _pool_idx[0] += 1
                 return s
 
+            _reconnect_lock = Lock()
+            _reconnect_after = [0.0]  # monotonic timestamp for cooldown
+
             async def _replace_pool_session(old_s):
-                """Replace a broken session in the pool."""
-                try:
-                    await old_s.stop()
-                except Exception:
-                    pass
-                try:
-                    new_s = await self._acquire_session(up_client, dc_id, is_media=True)
-                    async with _pool_lock:
-                        for i, s in enumerate(pool):
-                            if s is old_s:
-                                pool[i] = new_s
-                                break
-                        else:
-                            pool.append(new_s)
-                except Exception as e:
-                    LOGGER.warning(f"HypertgUL session replace failed: {e}")
+                """Replace a broken session in the pool.
+
+                A global cooldown ensures that when many workers detect a
+                transport error simultaneously they don't all flood Telegram
+                with TCP handshakes at once.  Only one replacement runs at a
+                time and subsequent ones wait at least 2 s.
+                """
+                async with _reconnect_lock:
+                    now = _time_mod.monotonic()
+                    cooldown = _reconnect_after[0] - now
+                    if cooldown > 0:
+                        await sleep(cooldown)
+                    try:
+                        await old_s.stop()
+                    except Exception:
+                        pass
+                    try:
+                        new_s = await self._acquire_session(
+                            up_client, dc_id, is_media=True
+                        )
+                        async with _pool_lock:
+                            for i, s in enumerate(pool):
+                                if s is old_s:
+                                    pool[i] = new_s
+                                    break
+                            else:
+                                pool.append(new_s)
+                    except Exception as e:
+                        LOGGER.warning(f"HypertgUL session replace failed: {e}")
+                    _reconnect_after[0] = _time_mod.monotonic() + 2.0
+
+            _recent_errors = [0]
+            _error_window = [0.0]
 
             async def _worker(wid):
                 while True:
@@ -207,8 +229,28 @@ class HypertgUpload(HypertgTransfer):
                                 f"HypertgUL worker {wid} transport error "
                                 f"attempt {attempt + 1}/5 — reconnecting"
                             )
+                            # Mass-failure backoff: if >50% of workers have
+                            # errored within the last 5 s, pause briefly so
+                            # the server/DC can recover.
+                            now = _time_mod.monotonic()
+                            if now - _error_window[0] > 5:
+                                _recent_errors[0] = 0
+                                _error_window[0] = now
+                            _recent_errors[0] += 1
+                            if _recent_errors[0] > n_workers // 2:
+                                LOGGER.warning(
+                                    f"HypertgUL mass failure detected "
+                                    f"({_recent_errors[0]}/{n_workers} workers) — "
+                                    f"backing off 5s"
+                                )
+                                await sleep(5)
+                                _recent_errors[0] = 0
                             await _replace_pool_session(s)
                             s = await _get_pool_session()
+                            # Exit immediately if upload was cancelled while
+                            # we were waiting for the cooldown/backoff.
+                            if self._listener.is_cancelled:
+                                return
                             await sleep(1)
                         except Exception:
                             if attempt == 4:

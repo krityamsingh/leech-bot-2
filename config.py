@@ -24,8 +24,10 @@ DEFAULT_LANG = "en"
 # ── USER + HELPER CLIENTS (the speed lever) ──────────────────────────────────
 # "Leech" user session — admin in LEECH_DUMP_CHAT (verified).
 USER_SESSION_STRING = "BQGXDgUAjADJk0-Tki-dkPdlU3J90KUGoDSiTX71r_C7zfUMY0CeQDZn29u7rQML-ZA1QGm1ZUIAKryKvcMxaijXJMmHya4W2K0hw3glXFzwsx_DUgFeOJxgBg39op8luPxhVuBlPbYd1929tMKn7pZO8HaNWx2ka4m75lFJDUDEITSguiWqm8Yc6Kn_hSnTJAQOhottfPND8mCRUtD-1_piKoajzBjKbKl2epA0LE-gwS83tzehhCO1_ybi1fEh9gGc8w_THUlNu5fPNdrzyO1dugV6Q2x67Z4B-1hIYDoG6WUu9kbLlpZu1Ue4RN9xjWjvUxmuTmEsaHjUgXP6vLgeNSVnCAAAAAGGIOrzAA"
-# Helper bot tokens (space-separated). @Zoro_Leechx_Bot — admin in dump chat.
-HELPER_TOKENS = "8694415781:AAGMjpQQf8RbmRgd8sbTccok4dSdXje6CYA"
+# Helper bot tokens (space-separated). 17 unique bots — add EACH as admin to
+# LEECH_DUMP_CHAT so they can see/download the files. Each bot adds a parallel
+# download lane (~2-5 MB/s) via the HyperDL coordinator.
+HELPER_TOKENS = "8980935526:AAHelJTsJc8b-LcHLbFkw8OjcDBlKMkzw2k 8753165289:AAFuwaSgKtckYR2VyHXEZwhJJiQsFcoKXeA 8949216879:AAFait-J7gbedx5DZlpHN1LmJncC1UkSxy0 8293232943:AAHO9K2bnxWUEeMnWIEsx9HEl9-6CFT6qgw 8552100143:AAGMjxMfkvoXGTe-PHeRAPYGy-RvHonm7vk 8382794975:AAF70jE5DWLGr9OGPK3OZH8MUCZovyRGZ1A 8749817037:AAEYJ1W6zjvnI34iOiQZAXkd5kTJgy8KtMA 8639417912:AAG3FYUQ573HGaLPPGU7srgUbhQAWD4Y7Gg 8837189677:AAE9T8RhTXxagL12JQ405bqQ0VtGPzx_I5A 8392938925:AAEGGgRsP5_FsICwk70rhPCPsi_D6dJkFF8 8260866955:AAFyZ2LyG7tmHkOzDBXoZkx8sgcx1U3d7dE 8201403619:AAHKrHizJ6YuwYcT5usaBagFEfUR0r-SzNc 8271548044:AAGQyjjVwPCiX1f79zzypCFS9BOZDDDRCps 7813598075:AAFUrbGZfBeRiZb1H1MOBULU_ed69OSTwzY 8511156627:AAGERpBUl7edSj7toGJBMh8V-b7EvtRCfIY 8597691736:AAGU7Yl_tonzLZeINMcklPKKcMdJYLgVTkQ 8808349957:AAHup2bMinFD95PV1idFkNwi2erI9nIdu-M"
 # Helper USER session strings (space-separated). Each one ≈ +3-5 MB/s upload.
 HELPER_STRINGS = ""
 

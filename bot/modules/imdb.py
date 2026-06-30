@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from contextlib import suppress
 from re import findall, IGNORECASE
-from imdb import Cinemagoer
-from pycountry import countries as conn
 
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from pyrogram.filters import command, regex
@@ -16,42 +14,25 @@ from bot.helper.telegram_helper.message_utils import sendMessage, editMessage
 from bot.helper.ext_utils.bot_utils import get_readable_time
 from bot.helper.telegram_helper.button_build import ButtonMaker
 
-imdb = Cinemagoer()
+try:
+    from imdb import Cinemagoer
+    imdb_client = Cinemagoer()
+except Exception as e:
+    LOGGER.warning(f"IMDB init failed, disabling IMDB module: {e}")
+    imdb_client = None
 
 IMDB_GENRE_EMOJI = {
     "Action": "🚀",
     "Adult": "🔞",
     "Adventure": "🌋",
     "Animation": "🎠",
-    "Biography": "📜",
-    "Comedy": "🪗",
-    "Crime": "🔪",
-    "Documentary": "🎞",
-    "Drama": "🎭",
-    "Family": "👨‍👩‍👧‍👦",
-    "Fantasy": "🫧",
-    "Film Noir": "🎯",
-    "Game Show": "🎮",
-    "History": "🏛",
-    "Horror": "🧟",
-    "Musical": "🎻",
-    "Music": "🎸",
-    "Mystery": "🧳",
-    "News": "📰",
-    "Reality-TV": "🖥",
-    "Romance": "🥰",
-    "Sci-Fi": "🌠",
-    "Short": "📝",
-    "Sport": "⛳",
-    "Talk-Show": "👨‍🍳",
-    "Thriller": "🗡",
-    "War": "⚔",
-    "Western": "🪩",
 }
 LIST_ITEMS = 4
 
 
 async def imdb_search(_, message):
+    if imdb_client is None:
+        return await sendMessage(message, "<i>IMDB module is disabled (init failed)</i>")
     if " " in message.text:
         k = await sendMessage(message, "<code>Searching IMDB ...</code>")
         title = message.text.split(" ", 1)[1]
@@ -59,7 +40,7 @@ async def imdb_search(_, message):
         buttons = ButtonMaker()
         if title.lower().startswith("https://www.imdb.com/title/tt"):
             movieid = title.replace("https://www.imdb.com/title/tt", "")
-            if movie := imdb.get_movie(movieid):
+            if movie := imdb_client.get_movie(movieid):
                 buttons.ibutton(
                     f"🎬 {movie.get('title')} ({movie.get('year')})",
                     f"imdb {user_id} movie {movieid}",
@@ -89,6 +70,8 @@ async def imdb_search(_, message):
 
 
 def get_poster(query, bulk=False, id=False, file=None):
+    if imdb_client is None:
+        return None
     if not id:
         query = (query.strip()).lower()
         title = query
@@ -102,7 +85,7 @@ def get_poster(query, bulk=False, id=False, file=None):
                 year = list_to_str(year[:1])
         else:
             year = None
-        movieid = imdb.search_movie(title.lower(), results=10)
+        movieid = imdb_client.search_movie(title.lower(), results=10)
         if not movieid:
             return None
         if year:
@@ -121,7 +104,7 @@ def get_poster(query, bulk=False, id=False, file=None):
         movieid = movieid[0].movieID
     else:
         movieid = query
-    movie = imdb.get_movie(movieid)
+    movie = imdb_client.get_movie(movieid)
     if movie.get("original air date"):
         date = movie["original air date"]
     elif movie.get("year"):
@@ -204,7 +187,7 @@ def list_to_hash(k, flagg=False, emoji=False):
             ele = elem.replace(" ", "_").replace("-", "_")
             if flagg:
                 with suppress(AttributeError):
-                    conflag = (conn.get(name=elem)).flag
+                    conflag = (conn.get(name=ele)).flag
                     listing += f"{conflag} "
             if emoji:
                 listing += f"{IMDB_GENRE_EMOJI.get(elem, '')} "
@@ -229,6 +212,8 @@ async def imdb_callback(_, query):
     elif data[2] == "movie":
         await query.answer()
         imdb = get_poster(query=data[3], id=True)
+        if imdb is None:
+            return await query.answer("IMDB lookup failed", show_alert=True)
         buttons = []
         if imdb["trailer"]:
             if isinstance(imdb["trailer"], list):

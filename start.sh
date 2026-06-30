@@ -1,9 +1,9 @@
 #!/bin/bash
 export PORT=${PORT:-80}
 
-if [ -f .env ]; then
+if [ -f credentials.env ]; then
   set -a
-  source .env
+  source credentials.env
   set +a
 fi
 

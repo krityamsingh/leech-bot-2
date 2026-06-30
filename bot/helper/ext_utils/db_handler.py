@@ -89,7 +89,7 @@ class DbManger:
     async def update_deploy_config(self):
         if self.__err:
             return
-        current_config = dict(dotenv_values("config.env"))
+        current_config = dict(dotenv_values("credentials.env"))
         await self.__db.settings.deployConfig.replace_one(
             {"_id": bot_id}, current_config, upsert=True
         )
@@ -131,7 +131,7 @@ class DbManger:
         await self.__db.settings.files.update_one(
             {"_id": bot_id}, {"$set": {path: pf_bin}}, upsert=True
         )
-        if path == "config.env":
+        if path == "credentials.env":
             await self.update_deploy_config()
         else:
             self.__conn.close

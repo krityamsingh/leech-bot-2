@@ -27,8 +27,8 @@ basicConfig(
     level=INFO,
 )
 
-if ospath.exists("config.env"):
-    load_dotenv("config.env", override=False)
+if ospath.exists("credentials.env"):
+    load_dotenv("credentials.env", override=False)
 
 try:
     if bool(environ.get("_____REMOVE_THIS_LINE_____")):
@@ -57,7 +57,7 @@ if DATABASE_URL is not None:
         del old_config["_id"]
     if (
         old_config is not None
-        and old_config == dict(dotenv_values("config.env"))
+        and old_config == dict(dotenv_values("credentials.env"))
         or old_config is None
     ) and config_dict is not None:
         environ["UPSTREAM_REPO"] = config_dict["UPSTREAM_REPO"]

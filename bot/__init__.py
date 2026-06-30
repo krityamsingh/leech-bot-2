@@ -52,8 +52,8 @@ getLogger("httpx").setLevel(ERROR)
 
 LOGGER = getLogger(__name__)
 
-if ospath.exists("config.env"):
-    load_dotenv("config.env", override=False)
+if ospath.exists("credentials.env"):
+    load_dotenv("credentials.env", override=False)
 
 Interval = []
 QbInterval = []
@@ -103,7 +103,7 @@ if len(DATABASE_URL) == 0:
 if DATABASE_URL:
     conn = MongoClient(DATABASE_URL)
     db = conn.canonleech
-    current_config = dict(dotenv_values("config.env"))
+    current_config = dict(dotenv_values("credentials.env"))
     old_config = db.settings.deployConfig.find_one({"_id": bot_id})
     if old_config is None:
         db.settings.deployConfig.replace_one(

@@ -22,10 +22,9 @@ from bot.helper.ext_utils.bot_utils import (
     sync_to_async,
     get_telegraph_list,
     get_readable_file_size,
-    checking_access,
     get_readable_time,
 )
-from bot.helper.telegram_helper.message_utils import forcesub, check_botpm
+from bot.helper.telegram_helper.message_utils import check_botpm
 from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.themes import BotTheme
 
@@ -261,14 +260,7 @@ async def task_utils(message):
     if await CustomFilters.sudo("", message):
         return msg, button
     user_id = message.from_user.id
-    token_msg, button = await checking_access(user_id, button)
-    if token_msg is not None:
-        msg.append(token_msg)
     if message.chat.type != message.chat.type.BOT:
-        if ids := config_dict["FSUB_IDS"]:
-            _msg, button = await forcesub(message, ids, button)
-            if _msg:
-                msg.append(_msg)
         user_dict = user_data.get(user_id, {})
         if config_dict["BOT_PM"] or user_dict.get("bot_pm") or config_dict["SAFE_MODE"]:
             _msg, button = await check_botpm(message, button)
